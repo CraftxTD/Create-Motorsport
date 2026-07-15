@@ -37,6 +37,14 @@ repositories {
             includeGroup("software.bernie.geckolib")
         }
     }
+    maven {
+    // Sable Companion
+    name = "RyanHCode Maven"
+    url = "https://maven.ryanhcode.dev/releases"
+    content {
+        includeGroup("dev.ryanhcode.sable-companion")
+    }
+}
 }
 
 base {
@@ -144,6 +152,7 @@ dependencies {
     ))
     compileOnly(files("libs/create-aeronautics-bundled-1.21.1-1.3.0.jar"))
     localRuntime(files("libs/create-aeronautics-bundled-1.21.1-1.3.0.jar"))
+    compileOnly("dev.ryanhcode.sable-companion:sable-companion-common-${minecraft_version}:${sable_companion_version}")
 
     // Example optional mod dependency with JEI
     // The JEI API is declared for compile time use, while the full JEI artifact is used at runtime

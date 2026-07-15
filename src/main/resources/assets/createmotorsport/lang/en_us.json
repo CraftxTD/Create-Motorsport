@@ -1,18 +1,33 @@
 {
   "itemGroup.createmotorsport": "Create: Motorsport",
   "block.createmotorsport.engine_block": "Engine Block",
-  "block.createmotorsport.gearbox": "Gearbox",
-  "block.createmotorsport.clutch": "Clutch",
   "block.createmotorsport.suspension": "Suspension",
+  "block.createmotorsport.steering_wheel": "Steering Wheel",
   "item.createmotorsport.air_intake": "Air Intake",
   "item.createmotorsport.exhaust_manifold": "Exhaust Manifold",
   "item.createmotorsport.suspension_wrench": "Suspension Wrench",
   "item.createmotorsport.racing_component": "Racing Component",
+  "item.createmotorsport.racing_tire_1": "Racing Tire I (load ~20 kpn)",
+  "item.createmotorsport.racing_tire_2": "Racing Tire II (load ~36 kpn)",
+  "item.createmotorsport.racing_tire_3": "Racing Tire III (load ~65 kpn)",
+  "item.createmotorsport.racing_tire_4": "Racing Tire IV (load ~117 kpn)",
+  "item.createmotorsport.racing_tire_5": "Racing Tire V (load ~210 kpn)",
   "container.createmotorsport.engine": "Engine Block",
-  "container.createmotorsport.clutch": "Clutch",
+  "container.createmotorsport.suspension": "Suspension Steering",
+  "container.createmotorsport.steering_wheel": "Steering Wheel",
+
+  "key.categories.createmotorsport": "Create: Motorsport",
+  "key.createmotorsport.throttle": "Throttle",
+  "key.createmotorsport.brake": "Brake",
+  "key.createmotorsport.steer_left": "Steer Left",
+  "key.createmotorsport.steer_right": "Steer Right",
+  "key.createmotorsport.clutch": "Clutch",
+  "key.createmotorsport.shift_up": "Shift Up",
+  "key.createmotorsport.shift_down": "Shift Down",
 
   "createmotorsport.configuration.title": "Create: Motorsport Configs",
   "createmotorsport.configuration.section.createmotorsport.common.toml": "Create: Motorsport Configs",
   "createmotorsport.configuration.section.createmotorsport.common.toml.title": "Create: Motorsport Configs",
-  "createmotorsport.configuration.enableDebugLogging": "Enable Debug Logging"
+  "createmotorsport.configuration.enableDebugLogging": "Enable Debug Logging",
+  "createmotorsport.configuration.drivetrainTorqueScale": "Drivetrain Torque Scale"
 }

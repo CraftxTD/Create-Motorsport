@@ -1,0 +1,8 @@
+{
+  "variants": {
+    "facing=north": { "model": "createmotorsport:block/dashboard" },
+    "facing=east":  { "model": "createmotorsport:block/dashboard", "y": 90 },
+    "facing=south": { "model": "createmotorsport:block/dashboard", "y": 180 },
+    "facing=west":  { "model": "createmotorsport:block/dashboard", "y": 270 }
+  }
+}

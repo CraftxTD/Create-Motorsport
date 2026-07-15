@@ -2,7 +2,7 @@
   "multipart": [
     {
       "when": {
-        "axis": "x"
+        "facing": "east"
       },
       "apply": {
         "model": "createmotorsport:block/engine"
@@ -10,7 +10,16 @@
     },
     {
       "when": {
-        "axis": "z"
+        "facing": "west"
+      },
+      "apply": {
+        "model": "createmotorsport:block/engine",
+        "y": 180
+      }
+    },
+    {
+      "when": {
+        "facing": "south"
       },
       "apply": {
         "model": "createmotorsport:block/engine",
@@ -19,7 +28,16 @@
     },
     {
       "when": {
-        "axis": "x",
+        "facing": "north"
+      },
+      "apply": {
+        "model": "createmotorsport:block/engine",
+        "y": 270
+      }
+    },
+    {
+      "when": {
+        "facing": "east",
         "has_intake": "true"
       },
       "apply": {
@@ -28,7 +46,17 @@
     },
     {
       "when": {
-        "axis": "z",
+        "facing": "west",
+        "has_intake": "true"
+      },
+      "apply": {
+        "model": "createmotorsport:block/intake",
+        "y": 180
+      }
+    },
+    {
+      "when": {
+        "facing": "south",
         "has_intake": "true"
       },
       "apply": {
@@ -38,7 +66,17 @@
     },
     {
       "when": {
-        "axis": "x",
+        "facing": "north",
+        "has_intake": "true"
+      },
+      "apply": {
+        "model": "createmotorsport:block/intake",
+        "y": 270
+      }
+    },
+    {
+      "when": {
+        "facing": "east",
         "has_exhaust": "true"
       },
       "apply": {
@@ -47,12 +85,32 @@
     },
     {
       "when": {
-        "axis": "z",
+        "facing": "west",
+        "has_exhaust": "true"
+      },
+      "apply": {
+        "model": "createmotorsport:block/exhaust",
+        "y": 180
+      }
+    },
+    {
+      "when": {
+        "facing": "south",
         "has_exhaust": "true"
       },
       "apply": {
         "model": "createmotorsport:block/exhaust",
         "y": 90
+      }
+    },
+    {
+      "when": {
+        "facing": "north",
+        "has_exhaust": "true"
+      },
+      "apply": {
+        "model": "createmotorsport:block/exhaust",
+        "y": 270
       }
     }
   ]

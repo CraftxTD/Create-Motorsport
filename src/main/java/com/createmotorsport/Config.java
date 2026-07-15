@@ -6,8 +6,12 @@ public class Config {
     private static final ModConfigSpec.Builder BUILDER = new ModConfigSpec.Builder();
 
     public static final ModConfigSpec.BooleanValue ENABLE_DEBUG_LOGGING = BUILDER
-            .comment("Whether Create: Motorsport should log extra development diagnostics.")
+            .comment("Set to 'true' to see additional debugging logging")
             .define("enableDebugLogging", false);
+
+    public static final ModConfigSpec.DoubleValue DRIVETRAIN_TORQUE_SCALE = BUILDER
+            .comment("Tuning for torque maths, to account for Minecraft scale car mass")
+            .defineInRange("drivetrainTorqueScale", 0.016, 0.0001, 10.0);
 
     static final ModConfigSpec SPEC = BUILDER.build();
 }

@@ -18,10 +18,10 @@ public class SuspensionWrenchItem extends Item {
         }
 
         if (!context.getLevel().isClientSide) {
-            SuspensionBlockEntity.SuspensionStiffness stiffness = suspension.cycleStiffness();
+            SuspensionBlockEntity.SuspensionSetting setting = suspension.cycleSetting();
             if (context.getPlayer() != null) {
                 context.getPlayer().displayClientMessage(
-                        Component.literal("Suspension: " + stiffness.getDisplayName()),
+                        Component.literal("Suspension: " + setting.getDisplayName()),
                         true
                 );
             }

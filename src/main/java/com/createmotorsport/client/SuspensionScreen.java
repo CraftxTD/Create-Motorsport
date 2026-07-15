@@ -1,8 +1,8 @@
 package com.createmotorsport.client;
 
-import com.createmotorsport.block.entity.EngineBlockEntity;
-import com.createmotorsport.block.entity.EngineBlockEntity.ControlChannel;
-import com.createmotorsport.menu.EngineMenu;
+import com.createmotorsport.block.entity.SuspensionBlockEntity;
+import com.createmotorsport.block.entity.SuspensionBlockEntity.SteerChannel;
+import com.createmotorsport.menu.SuspensionMenu;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.network.chat.Component;
@@ -10,23 +10,24 @@ import net.minecraft.world.entity.player.Inventory;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.api.distmarker.OnlyIn;
 
-// Temporary screen in the style I am used to making gui's, based on RedstoneLinksScreen from Univeral Keyboard
+
+// Screens that I quickly made based on my keyboard mods style, we will replace with better ones
 @OnlyIn(Dist.CLIENT)
-public class EngineScreen extends AbstractContainerScreen<EngineMenu> {
-    private static final int FREQ_A_TINT = 0x55FF3333; // transparent red
-    private static final int FREQ_B_TINT = 0x553333FF; // transparent blue
+public class SuspensionScreen extends AbstractContainerScreen<SuspensionMenu> {
+    private static final int FREQ_A_TINT = 0x55FF3333;
+    private static final int FREQ_B_TINT = 0x553333FF;
     private static final int PANEL = 0xFF1A1A1A;
     private static final int BORDER = 0xFF555555;
     private static final int ROW = 0xFF2A2A2A;
     private static final int SLOT_EDGE = 0xFF3D3D3D;
     private static final int SLOT_BASE = 0xFF1F1F1F;
 
-    public EngineScreen(EngineMenu menu, Inventory playerInventory, Component title) {
+    public SuspensionScreen(SuspensionMenu menu, Inventory playerInventory, Component title) {
         super(menu, playerInventory, title);
         this.imageWidth = 176;
-        this.imageHeight = EngineMenu.HOTBAR_Y + 18 + 6;
-        this.inventoryLabelY = EngineMenu.INV_Y - 12;
-        this.inventoryLabelX = EngineMenu.INV_X;
+        this.imageHeight = SuspensionMenu.HOTBAR_Y + 18 + 6;
+        this.inventoryLabelY = SuspensionMenu.INV_Y - 12;
+        this.inventoryLabelX = SuspensionMenu.INV_X;
     }
 
     @Override
@@ -48,23 +49,16 @@ public class EngineScreen extends AbstractContainerScreen<EngineMenu> {
         g.fill(l, t, l + 1, t + h, BORDER);
         g.fill(l + w - 1, t, l + w, t + h, BORDER);
 
-        // Component slots (exhaust / intake)
-        drawSlot(g, l + EngineMenu.EXHAUST_X, t + EngineMenu.COMPONENT_Y, 0);
-        drawSlot(g, l + EngineMenu.INTAKE_X, t + EngineMenu.COMPONENT_Y, 0);
-        g.drawString(font, "Components", l + 12, t + EngineMenu.COMPONENT_Y + 4, 0xFFFFFFFF, false);
-
-        // Channel rows
-        for (ControlChannel channel : EngineBlockEntity.CHANNELS) {
-            int y = t + EngineMenu.CHANNEL_Y0 + channel.ordinal() * EngineMenu.CHANNEL_ROW_H;
+        for (SteerChannel channel : SuspensionBlockEntity.CHANNELS) {
+            int y = t + SuspensionMenu.CHANNEL_Y0 + channel.ordinal() * SuspensionMenu.CHANNEL_ROW_H;
             g.fill(l + 8, y - 2, l + w - 8, y + 16, ROW);
             g.drawString(font, channel.getDisplayName(), l + 12, y + 4, 0xFFFFFFFF, false);
-            drawSlot(g, l + EngineMenu.CHANNEL_SLOT_A_X, y, FREQ_A_TINT);
-            drawSlot(g, l + EngineMenu.CHANNEL_SLOT_B_X, y, FREQ_B_TINT);
+            drawSlot(g, l + SuspensionMenu.CHANNEL_SLOT_A_X, y, FREQ_A_TINT);
+            drawSlot(g, l + SuspensionMenu.CHANNEL_SLOT_B_X, y, FREQ_B_TINT);
         }
 
-        // Player inventory backing
-        int invY = t + EngineMenu.INV_Y;
-        g.fill(l + EngineMenu.INV_X - 4, invY - 2, l + w - 8, t + h - 4, 0xFF222222);
+        int invY = t + SuspensionMenu.INV_Y;
+        g.fill(l + SuspensionMenu.INV_X - 4, invY - 2, l + w - 8, t + h - 4, 0xFF222222);
     }
 
     private void drawSlot(GuiGraphics g, int x, int y, int tint) {
@@ -81,16 +75,7 @@ public class EngineScreen extends AbstractContainerScreen<EngineMenu> {
     @Override
     protected void renderLabels(GuiGraphics g, int mx, int my) {
         g.drawString(font, title, 8, 6, 0xFFFFFFFF, false);
-
-        int gearCode = menu.getGearCode();
-        String gear = switch (gearCode) {
-            case 0 -> "R";
-            case 1 -> "N";
-            default -> String.valueOf(gearCode - 1);
-        };
-        String readout = menu.getRpm() + " RPM   Gear " + gear;
-        g.drawString(font, readout, 8, 20, 0xFF66FF66, false);
-
+        g.drawString(font, "Wireless steering", 8, 20, 0xFF888888, false);
         g.drawString(font, playerInventoryTitle, inventoryLabelX, inventoryLabelY, 0xFFAAAAAA, false);
     }
 }

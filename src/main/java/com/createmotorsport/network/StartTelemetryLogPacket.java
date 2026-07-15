@@ -1,0 +1,39 @@
+package com.createmotorsport.network;
+
+import com.createmotorsport.CreateMotorsport;
+import com.createmotorsport.block.entity.SteeringWheelBlockEntity;
+import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
+
+// Client -> server; starts telemetry csv log for (seconds)
+public record StartTelemetryLogPacket(int seconds) implements CustomPacketPayload {
+    public static final Type<StartTelemetryLogPacket> TYPE =
+            new Type<>(ResourceLocation.fromNamespaceAndPath(CreateMotorsport.MODID, "start_telemetry_log"));
+
+    public static final StreamCodec<FriendlyByteBuf, StartTelemetryLogPacket> CODEC = StreamCodec.composite(
+            ByteBufCodecs.VAR_INT, StartTelemetryLogPacket::seconds,
+            StartTelemetryLogPacket::new);
+
+    @Override
+    public Type<? extends CustomPacketPayload> type() {
+        return TYPE;
+    }
+
+    public static void handle(StartTelemetryLogPacket packet, IPayloadContext context) {
+        context.enqueueWork(() -> {
+            var player = context.player();
+            SteeringWheelBlockEntity wheel = SteeringWheelBlockEntity.findDrivenBy(player);
+            if (wheel == null) {
+                player.displayClientMessage(Component.literal(
+                        "§c[Motorsports] You have to be driving to start a log"), false);
+                return;
+            }
+            wheel.startTelemetryLog(player, Math.max(1, Math.min(600, packet.seconds())));
+        });
+    }
+}

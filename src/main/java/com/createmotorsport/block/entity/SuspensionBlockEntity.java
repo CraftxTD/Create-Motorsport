@@ -1,207 +1,884 @@
 package com.createmotorsport.block.entity;
 
 import com.createmotorsport.CreateMotorsport;
-import com.simibubi.create.content.kinetics.base.HorizontalAxisKineticBlock;
-import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
+import com.createmotorsport.block.SuspensionBlock;
+import com.createmotorsport.physics.TireModel;
+import com.simibubi.create.Create;
+import com.simibubi.create.content.redstone.link.IRedstoneLinkable;
+import com.simibubi.create.content.redstone.link.RedstoneLinkNetworkHandler;
+import com.simibubi.create.foundation.blockEntity.SmartBlockEntity;
+import com.simibubi.create.foundation.blockEntity.behaviour.BlockEntityBehaviour;
+import dev.ryanhcode.offroad.content.components.TireLike;
+import dev.ryanhcode.offroad.index.OffroadDataComponents;
+import net.createmod.catnip.data.Couple;
+import net.minecraft.world.SimpleContainer;
+import dev.ryanhcode.sable.Sable;
+import dev.ryanhcode.sable.api.block.BlockEntitySubLevelActor;
+import dev.ryanhcode.sable.api.math.OrientedBoundingBox3d;
+import dev.ryanhcode.sable.api.physics.force.ForceTotal;
+import dev.ryanhcode.sable.api.physics.handle.RigidBodyHandle;
+import dev.ryanhcode.sable.api.physics.mass.MassData;
+import dev.ryanhcode.sable.companion.math.JOMLConversion;
+import dev.ryanhcode.sable.companion.math.Pose3d;
+import dev.ryanhcode.sable.companion.math.Pose3dc;
+import dev.ryanhcode.sable.mixinterface.clip_overwrite.ClipContextExtension;
+import dev.ryanhcode.sable.physics.config.block_properties.PhysicsBlockPropertyHelper;
+import dev.ryanhcode.sable.sublevel.ServerSubLevel;
+import dev.ryanhcode.sable.sublevel.SubLevel;
+import it.unimi.dsi.fastutil.objects.ObjectOpenHashSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.HolderLookup;
+import net.minecraft.core.NonNullList;
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.world.level.Level;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.util.Mth;
+import net.minecraft.world.ContainerHelper;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
-import software.bernie.geckolib.animatable.GeoBlockEntity;
-import software.bernie.geckolib.animatable.instance.AnimatableInstanceCache;
-import software.bernie.geckolib.animation.AnimatableManager;
-import software.bernie.geckolib.animation.AnimationController;
-import software.bernie.geckolib.animation.PlayState;
-import software.bernie.geckolib.animation.RawAnimation;
-import software.bernie.geckolib.util.GeckoLibUtil;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.CollisionContext;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.joml.Vector3d;
 
-public class SuspensionBlockEntity extends KineticBlockEntity implements GeoBlockEntity {
-    private static final RawAnimation AXLE_ROTATION = RawAnimation.begin().thenLoop("axle_rotation");
-    private static final RawAnimation AXLE_ROTATION_REVERSE = RawAnimation.begin().thenLoop("axle_rotation_reverse");
-    private static final RawAnimation LEFT_SUSPENSION = RawAnimation.begin().thenLoop("left_suspension");
-    private static final RawAnimation RIGHT_SUSPENSION = RawAnimation.begin().thenLoop("right_suspension");
-    private static final int SUSPENSION_MOVEMENT_TICKS = 8;
+import java.util.Collection;
+import java.util.List;
 
-    private final AnimatableInstanceCache animationCache = GeckoLibUtil.createInstanceCache(this);
-    private float leftCompression;
-    private float rightCompression;
-    private int leftSuspensionMovementTicks;
-    private int rightSuspensionMovementTicks;
+public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEntitySubLevelActor {
+    public static final double REST_LENGTH = 0.65;
+    public static final double MAX_TRAVEL = 0.45;
+    public static final double MAX_DROOP_RENDER = 0.15;
+    private static final double MAX_STEER_RAD = Math.toRadians(32.0);
+    private static final double GROUND_MARGIN = 0.15;
+    private static final int SYNC_INTERVAL_TICKS = 2;
 
-    public enum WheelMountSide {
-        LEFT,
-        RIGHT
+    // Server-side regitries for engine lookup and batched force flushing
+    private static final Collection<SuspensionBlockEntity> LOADED = new ObjectOpenHashSet<>();
+    private static final Collection<SuspensionBlockEntity> QUEUED = new ObjectOpenHashSet<>();
+
+    public enum WheelSide {
+        LEFT, RIGHT
     }
 
-    public enum SuspensionStiffness {
-        SOFT("Soft", 0.55F),
-        MEDIUM("Medium", 1.0F),
-        HARD("Hard", 1.55F);
+    public enum SuspensionSetting {
+        SOFT("Soft", 1.6, 0.35),
+        MEDIUM("Medium", 2.2, 0.55),
+        FIRM("Firm", 3.0, 0.70),
+        RACE("Race", 3.8, 0.90);
 
         private final String displayName;
-        private final float compressionResistance;
+        private final double naturalFreqHz;
+        private final double dampingRatio;
 
-        SuspensionStiffness(String displayName, float compressionResistance) {
+        SuspensionSetting(String displayName, double naturalFreqHz, double dampingRatio) {
             this.displayName = displayName;
-            this.compressionResistance = compressionResistance;
+            this.naturalFreqHz = naturalFreqHz;
+            this.dampingRatio = dampingRatio;
         }
 
         public String getDisplayName() {
             return displayName;
         }
 
-        public float getCompressionResistance() {
-            return compressionResistance;
-        }
-
-        public SuspensionStiffness next() {
-            SuspensionStiffness[] values = values();
+        public SuspensionSetting next() {
+            SuspensionSetting[] values = values();
             return values[(ordinal() + 1) % values.length];
         }
     }
 
-    private SuspensionStiffness stiffness = SuspensionStiffness.MEDIUM;
+    public static class WheelState {
+        // simulation (server)
+        double omega;
+        double springLength = REST_LENGTH;
+        boolean grounded;
+        double surfaceMu = 1.0;
+
+        // interpolation (client)
+        double clientSpringLength = REST_LENGTH;
+        double lastClientSpringLength = REST_LENGTH;
+        double angle;
+        double lastAngle;
+
+        // tire placing animation (client): 0 = none, 1 = deployed
+        double deploy;
+        double lastDeploy;
+
+        // sync bookkeeping (server)
+        double syncedOmega;
+        double syncedSpringLength = REST_LENGTH;
+
+        // last used physics values, for csv logging
+        double telemLoad;
+        double telemSlipRatio;
+        double telemSlipAngleRad;
+        double telemVLon;
+        double telemVLat;
+        double telemLongForce;
+        double telemLatForce;
+        double telemWheelSpeed;
+        double telemCompression;
+        double telemBrakeTorque;
+        double telemGripMult = 1.0;
+    }
+
+    // snapshot of a wheel's last physics step, for csv logging
+    public record WheelTelemetry(boolean grounded, double loadN, double slipRatio, double slipAngleDeg,
+                                 double vLonMs, double vLatMs, double longForceN, double latForceN,
+                                 double omega, double wheelSpeedMs, double springLenM, double compressionM,
+                                 double surfaceMu, double brakeTorqueNm) {
+    }
+
+    public WheelTelemetry getTelemetry(WheelSide side) {
+        WheelState w = getWheel(side);
+        return new WheelTelemetry(w.grounded, w.telemLoad, w.telemSlipRatio,
+                Math.toDegrees(w.telemSlipAngleRad), w.telemVLon, w.telemVLat, w.telemLongForce,
+                w.telemLatForce, w.omega, w.telemWheelSpeed, w.springLength, w.telemCompression,
+                w.surfaceMu * w.telemGripMult, w.telemBrakeTorque);
+    }
+
+
+    // redstone link control channels, used by steering menu
+    public enum SteerChannel {
+        STEER_LEFT("Steer Left"),
+        STEER_RIGHT("Steer Right"),
+        BRAKE("Brake");
+
+        private final String displayName;
+
+        SteerChannel(String displayName) {
+            this.displayName = displayName;
+        }
+
+        public String getDisplayName() {
+            return displayName;
+        }
+    }
+
+    public static final SteerChannel[] CHANNELS = SteerChannel.values();
+    public static final int CONTROL_SLOT_COUNT = CHANNELS.length * 2;
+
+    public static int channelSlotA(SteerChannel channel) {
+        return channel.ordinal() * 2;
+    }
+
+    public static int channelSlotB(SteerChannel channel) {
+        return channel.ordinal() * 2 + 1;
+    }
+
+    private final WheelState leftWheel = new WheelState();
+    private final WheelState rightWheel = new WheelState();
+    private final NonNullList<ItemStack> tires = NonNullList.withSize(2, ItemStack.EMPTY);
+    private final ForceTotal forceTotal = new ForceTotal();
+
+    // two create redstone link frequency slots per named channel
+    private final NonNullList<ItemStack> controlItems = NonNullList.withSize(CONTROL_SLOT_COUNT, ItemStack.EMPTY);
+    private final SimpleContainer controls = new SimpleContainer(CONTROL_SLOT_COUNT) {
+        @Override
+        public void setChanged() {
+            super.setChanged();
+            for (int slot = 0; slot < CONTROL_SLOT_COUNT; slot++) {
+                controlItems.set(slot, getItem(slot));
+            }
+            refreshLinkNetwork();
+            SuspensionBlockEntity.this.setChanged();
+        }
+    };
+    private final int[] receivedSignals = new int[CHANNELS.length];
+    private final boolean[] registeredLinks = new boolean[CHANNELS.length];
+    private final IRedstoneLinkable[] channelLinks = new IRedstoneLinkable[CHANNELS.length];
+
+
+    private int driverSteer;   // -15 to 15, + is left
+    private int driverBrake;   // 0 to 15
+    private long driverControlTime = Long.MIN_VALUE;
+
+    private SuspensionSetting setting = SuspensionSetting.MEDIUM;
+    private double driveTorquePerWheel;
+    private long driveTorqueGameTime = Long.MIN_VALUE;
+    private double brake01;
+    private int steerSignal;
+    private double chasingSteer;
+    private double lastChasingSteer;
+    private int syncCooldown;
+    private boolean syncDirty;
 
     public SuspensionBlockEntity(BlockPos pos, BlockState state) {
         super(CreateMotorsport.SUSPENSION_BLOCK_ENTITY.get(), pos, state);
+        for (int slot = 0; slot < CONTROL_SLOT_COUNT; slot++) {
+            controls.setItem(slot, controlItems.get(slot));
+        }
+        for (SteerChannel channel : CHANNELS) {
+            channelLinks[channel.ordinal()] = new ChannelLink(channel);
+        }
     }
 
-    public static void tick(Level level, BlockPos pos, BlockState state, SuspensionBlockEntity suspension) {
-        suspension.tick();
-        suspension.tickSuspensionMovement();
+    public SimpleContainer getControls() {
+        return controls;
+    }
+
+    @Override
+    public void addBehaviours(List<BlockEntityBehaviour> behaviours) {
+    }
+
+    // =======================================
+    // Registry and batching force application
+    // ====================================
+
+    // =
+    @Override
+    public void initialize() {
+        super.initialize();
+        if (level != null && !level.isClientSide) {
+            LOADED.add(this);
+            refreshLinkNetwork();
+        }
+    }
+
+    @Override
+    public void remove() {
+        LOADED.remove(this);
+        QUEUED.remove(this);
+        removeLinks();
+        super.remove();
+    }
+
+    @Override
+    public void onChunkUnloaded() {
+        LOADED.remove(this);
+        QUEUED.remove(this);
+        removeLinks();
+        super.onChunkUnloaded();
+    }
+
+    // =======================
+    // Steering chanels & redstone links
+    // ==========================
+
+    public void setDriverSteering(int steer, int brake) {
+        if (level == null || level.isClientSide) {
+            return;
+        }
+        driverSteer = Mth.clamp(steer, -15, 15);
+        driverBrake = Mth.clamp(brake, 0, 15);
+        driverControlTime = level.getGameTime();
+    }
+
+    private boolean driverActive() {
+        return level != null && driverControlTime >= level.getGameTime() - 2;
+    }
+
+    private int channelSignal(SteerChannel channel) {
+        return receivedSignals[channel.ordinal()];
+    }
+
+    private boolean hasLink(SteerChannel channel) {
+        return !controls.getItem(channelSlotA(channel)).isEmpty()
+                || !controls.getItem(channelSlotB(channel)).isEmpty();
+    }
+
+    private void refreshLinkNetwork() {
+        if (level == null || level.isClientSide) {
+            return;
+        }
+        for (SteerChannel channel : CHANNELS) {
+            int i = channel.ordinal();
+            if (registeredLinks[i]) {
+                Create.REDSTONE_LINK_NETWORK_HANDLER.removeFromNetwork(level, channelLinks[i]);
+                registeredLinks[i] = false;
+            }
+            if (hasLink(channel)) {
+                Create.REDSTONE_LINK_NETWORK_HANDLER.addToNetwork(level, channelLinks[i]);
+                registeredLinks[i] = true;
+            } else {
+                receivedSignals[i] = 0;
+            }
+        }
+    }
+
+    private void removeLinks() {
+        if (level == null || level.isClientSide) {
+            return;
+        }
+        for (SteerChannel channel : CHANNELS) {
+            int i = channel.ordinal();
+            if (registeredLinks[i]) {
+                Create.REDSTONE_LINK_NETWORK_HANDLER.removeFromNetwork(level, channelLinks[i]);
+                registeredLinks[i] = false;
+            }
+        }
+    }
+
+    private class ChannelLink implements IRedstoneLinkable {
+        private final SteerChannel channel;
+
+        private ChannelLink(SteerChannel channel) {
+            this.channel = channel;
+        }
+
+        @Override
+        public int getTransmittedStrength() {
+            return 0;
+        }
+
+        @Override
+        public void setReceivedStrength(int power) {
+            receivedSignals[channel.ordinal()] = power;
+        }
+
+        @Override
+        public boolean isListening() {
+            return hasLink(channel);
+        }
+
+        @Override
+        public boolean isAlive() {
+            return level != null && !level.isClientSide && !isRemoved() && level.isLoaded(worldPosition);
+        }
+
+        @Override
+        public Couple<RedstoneLinkNetworkHandler.Frequency> getNetworkKey() {
+            return Couple.create(
+                    RedstoneLinkNetworkHandler.Frequency.of(controls.getItem(channelSlotA(channel))),
+                    RedstoneLinkNetworkHandler.Frequency.of(controls.getItem(channelSlotB(channel)))
+            );
+        }
+
+        @Override
+        public BlockPos getLocation() {
+            return worldPosition;
+        }
+    }
+
+
+    // server thread only; collection of all suspensions loaded, engines filters by sub-level.
+    public static Collection<SuspensionBlockEntity> allLoaded() {
+        return LOADED;
+    }
+
+
+    // applies queued force once per physics substep from the Sable pre-tick event
+    public static void flushBatchedForces(ServerLevel level, double timeStep) {
+        for (SuspensionBlockEntity be : QUEUED) {
+            if (be.isRemoved()) {
+                continue;
+            }
+            SubLevel subLevel = Sable.HELPER.getContaining(be);
+            if (!(subLevel instanceof ServerSubLevel serverSubLevel)) {
+                continue;
+            }
+            RigidBodyHandle handle = RigidBodyHandle.of(serverSubLevel);
+            if (handle != null) {
+                handle.applyForcesAndReset(be.forceTotal);
+            }
+        }
+        QUEUED.clear();
+    }
+
+    // ==============================================
+    // Game tick
+    // ===============================
+
+    @Override
+    public void tick() {
+        super.tick();
+        if (level == null) {
+            return;
+        }
+        if (level.isClientSide) {
+            clientTick();
+            return;
+        }
+
+
+        // trying to auto recognize steering signal on the same sub-level
+        Direction facing = getFacing();
+        int newSteer;
+        double newBrake;
+        if (driverActive()) {
+            newSteer = driverSteer;
+            newBrake = driverBrake / 15.0;
+        } else {
+            int adjacentRight = level.getSignal(worldPosition.relative(facing), facing);
+            int adjacentLeft = level.getSignal(worldPosition.relative(facing.getOpposite()), facing.getOpposite());
+            int left = Math.max(adjacentLeft, channelSignal(SteerChannel.STEER_LEFT));
+            int right = Math.max(adjacentRight, channelSignal(SteerChannel.STEER_RIGHT));
+            newSteer = Mth.clamp(left - right, -15, 15);
+            int adjacentBrake = level.getSignal(worldPosition.above(), Direction.UP);
+            newBrake = Math.max(adjacentBrake, channelSignal(SteerChannel.BRAKE)) / 15.0;
+        }
+        if (newSteer != steerSignal) {
+            steerSignal = newSteer;
+            syncDirty = true;
+        }
+        brake01 = newBrake;
+
+        lastChasingSteer = chasingSteer;
+        chasingSteer = Mth.lerp(0.4, chasingSteer, steerSignal / 15.0 * MAX_STEER_RAD);
+
+
+        // torque stops when engine stops ticking
+        if (level.getGameTime() - driveTorqueGameTime > 3) {
+            driveTorquePerWheel = 0.0;
+        }
+
+        if (syncCooldown > 0) {
+            syncCooldown--;
+        }
+        if ((syncDirty || wheelStateChangedEnough()) && syncCooldown <= 0) {
+            syncDirty = false;
+            syncCooldown = SYNC_INTERVAL_TICKS;
+            for (WheelState w : new WheelState[]{leftWheel, rightWheel}) {
+                w.syncedOmega = w.omega;
+                w.syncedSpringLength = w.springLength;
+            }
+            sendData();
+        }
+    }
+
+    private boolean wheelStateChangedEnough() {
+        for (WheelState w : new WheelState[]{leftWheel, rightWheel}) {
+            if (Math.abs(w.omega - w.syncedOmega) > 0.4 || Math.abs(w.springLength - w.syncedSpringLength) > 0.015) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void clientTick() {
+        lastChasingSteer = chasingSteer;
+        chasingSteer = Mth.lerp(0.4, chasingSteer, steerSignal / 15.0 * MAX_STEER_RAD);
+        for (WheelSide side : WheelSide.values()) {
+            WheelState w = getWheel(side);
+            w.lastAngle = w.angle;
+            w.angle += w.omega / 20.0;
+            w.lastClientSpringLength = w.clientSpringLength;
+            w.clientSpringLength = Mth.lerp(0.5, w.clientSpringLength, w.springLength);
+            // Ease the tire down when it is first installed (mirrors the wheel mount's drop-in).
+            w.lastDeploy = w.deploy;
+            w.deploy = Mth.lerp(0.25, w.deploy, hasTire(side) ? 1.0 : 0.0);
+        }
+    }
+
+    // =======================
+    // Physics substep
+    // ================
+
+    @Override
+    public void sable$physicsTick(ServerSubLevel subLevel, RigidBodyHandle handle, double timeStep) {
+        if (!hasAnyTire()) {
+            return;
+        }
+        Pose3d pose = subLevel.logicalPose();
+        MassData massData = subLevel.getMassTracker();
+        if (massData.isInvalid()) {
+            return;
+        }
+
+        boolean queued = false;
+        queued |= stepWheel(WheelSide.LEFT, pose, massData, timeStep);
+        queued |= stepWheel(WheelSide.RIGHT, pose, massData, timeStep);
+        if (queued) {
+            QUEUED.add(this);
+        }
+    }
+
+    private boolean stepWheel(WheelSide side, Pose3d pose, MassData massData, double dt) {
+        WheelState wheel = getWheel(side);
+        TireLike tire = getTire(side).get(OffroadDataComponents.TIRE);
+        if (tire == null) {
+            wheel.grounded = false;
+            wheel.springLength = Mth.lerp(0.5, wheel.springLength, REST_LENGTH);
+            return false;
+        }
+
+        double radius = tire.radius();
+        Direction facing = getFacing();
+        Direction sideDir = getSideDirection(side);
+        Vec3 hardpoint = worldPosition.relative(sideDir).getCenter();
+        Vector3d hardpointJoml = JOMLConversion.toJOML(hardpoint);
+
+        // steering
+        Vector3d forward = new Vector3d(facing.getStepX(), 0.0, facing.getStepZ()).rotateY(chasingSteer);
+        Direction rightDir = facing.getClockWise();
+        Vector3d axle = new Vector3d(rightDir.getStepX(), 0.0, rightDir.getStepZ()).rotateY(chasingSteer);
+
+        TerrainCastResult cast = castToTerrain(hardpoint, forward, pose);
+        double distance = cast.distance();
+        boolean grounded = distance <= REST_LENGTH + radius + GROUND_MARGIN;
+        wheel.grounded = grounded;
+        wheel.surfaceMu = cast.hitBlock() != null
+                ? fudgeFriction(PhysicsBlockPropertyHelper.getFriction(level.getBlockState(cast.hitBlock())))
+                : 1.0;
+
+        double wheelInertia = Math.max(0.5, 5.0 * radius * radius * radius * radius);
+        double brakeTorque = brake01 * 2000.0 * radius;
+
+        if (!grounded) {
+            wheel.springLength = Mth.clamp(Mth.lerp(0.4, wheel.springLength, REST_LENGTH + MAX_DROOP_RENDER),
+                    REST_LENGTH - MAX_TRAVEL, REST_LENGTH + MAX_DROOP_RENDER);
+            wheel.omega = TireModel.integrateSpin(wheel.omega, radius, wheelInertia, driveTorquePerWheel,
+                    brakeTorque, 0.0, wheel.omega * radius, dt) * 0.995;
+            wheel.telemLoad = 0.0;
+            wheel.telemLongForce = 0.0;
+            wheel.telemLatForce = 0.0;
+            wheel.telemSlipRatio = 0.0;
+            wheel.telemSlipAngleRad = 0.0;
+            wheel.telemVLon = 0.0;
+            wheel.telemVLat = 0.0;
+            wheel.telemCompression = 0.0;
+            wheel.telemBrakeTorque = brakeTorque;
+            wheel.telemWheelSpeed = wheel.omega * radius;
+            return false;
+        }
+
+        wheel.springLength = Mth.clamp(distance - radius, REST_LENGTH - MAX_TRAVEL, REST_LENGTH + MAX_DROOP_RENDER);
+        double compression = Math.max(0.0, REST_LENGTH - wheel.springLength);
+
+        // mass per corner, Sable gives the exact jacobian denominator
+        double invNormalMass = massData.getInverseNormalMass(hardpointJoml, OrientedBoundingBox3d.UP);
+        if (invNormalMass <= 1.0e-9) {
+            return false;
+        }
+        double effectiveMass = 1.0 / invNormalMass;
+
+        Vector3d velocity = Sable.HELPER.getVelocity(level, hardpointJoml, new Vector3d());
+        Vector3d localVelocity = pose.transformNormalInverse(velocity);
+
+        double springForce = TireModel.suspensionForce(effectiveMass, setting.naturalFreqHz, setting.dampingRatio,
+                compression, localVelocity.y);
+
+        // slope correction (got it from Bullet's clipped_inv_contact_dot_suspension)
+        Vector3d hitNormal = new Vector3d(cast.normal().getStepX(), cast.normal().getStepY(), cast.normal().getStepZ());
+        if (cast.hitSubLevel() != null) {
+            cast.hitSubLevel().logicalPose().transformNormal(hitNormal);
+        }
+        pose.transformNormalInverse(hitNormal);
+        if (hitNormal.lengthSquared() < 1.0e-6 || hitNormal.y < 0.05) {
+            hitNormal.set(0.0, 1.0, 0.0);
+        } else {
+            hitNormal.normalize();
+        }
+        springForce *= Mth.clamp(1.0 / Math.max(0.5, hitNormal.y), 1.0, 2.0);
+        springForce = Math.min(springForce, 6.0 * effectiveMass * 9.81);
+
+        Vector3d springImpulse = new Vector3d(hitNormal).mul(springForce * dt);
+        forceTotal.applyImpulseAtPoint(massData, hardpointJoml, springImpulse);
+
+        // ================================
+        // Load sensitive tire friction
+        // ===================================
+        double normalForce = springForce;
+        double vLon = localVelocity.dot(forward);
+        double vLat = localVelocity.dot(axle);
+
+        float designLoad = getTire(side).getOrDefault(CreateMotorsport.TIRE_DESIGN_LOAD, 0.0f);
+        double gripMult = TireModel.loadSensitivity(normalForce, designLoad);
+        double effectiveMu = wheel.surfaceMu * gripMult;
+        wheel.telemGripMult = gripMult;
+
+        double tireForce = TireModel.longitudinalForce(normalForce, effectiveMu, wheel.omega * radius, vLon);
+        double forwardImpulse = tireForce * dt;
+
+        // cancel a fraction of the lateral velocity per substep same way Bullet does
+        double invSideMass = massData.getInverseNormalMass(hardpointJoml, axle);
+        double sideImpulse = invSideMass > 1.0e-9 ? -vLat * (1.0 / invSideMass) * 0.5 : 0.0;
+
+        double maxImpulse = normalForce * effectiveMu * TireModel.TIRE_GRIP * dt;
+        double ellipseScale = TireModel.frictionEllipseScale(forwardImpulse, sideImpulse, maxImpulse);
+        forwardImpulse *= ellipseScale;
+        sideImpulse *= ellipseScale;
+
+        wheel.omega = TireModel.integrateSpin(wheel.omega, radius, wheelInertia, driveTorquePerWheel,
+                brakeTorque, forwardImpulse / dt, vLon, dt);
+
+
+        // recording the resolved physics for csv logging
+        wheel.telemLoad = normalForce;
+        wheel.telemVLon = vLon;
+        wheel.telemVLat = vLat;
+        wheel.telemSlipRatio = (wheel.omega * radius - vLon) / Math.max(Math.abs(vLon), 2.0);
+        wheel.telemSlipAngleRad = Math.atan2(vLat, Math.max(Math.abs(vLon), 0.05));
+        wheel.telemLongForce = forwardImpulse / dt;
+        wheel.telemLatForce = sideImpulse / dt;
+        wheel.telemWheelSpeed = wheel.omega * radius;
+        wheel.telemCompression = compression;
+        wheel.telemBrakeTorque = brakeTorque;
+
+
+        // Forward forward at the wheel center, prevents barrel rolls. Thanks again bullet
+        Vector3d contactPoint = new Vector3d(hardpointJoml).sub(0.0, wheel.springLength, 0.0);
+        forceTotal.applyImpulseAtPoint(massData, contactPoint, new Vector3d(forward).mul(forwardImpulse));
+
+        Vector3d sidePoint = new Vector3d(contactPoint);
+        if (massData.getCenterOfMass() != null) {
+            double heightAboveCom = contactPoint.y - massData.getCenterOfMass().y();
+            double rollInfluence = 0.1;
+            sidePoint.y -= heightAboveCom * (1.0 - rollInfluence);
+        }
+        forceTotal.applyImpulseAtPoint(massData, sidePoint, new Vector3d(axle).mul(sideImpulse));
+
+        return true;
+    }
+
+    // wheel mount gives slight friction even at 0
+    private static double fudgeFriction(double realValue) {
+        return realValue < 1.0 ? 0.1 + 0.9 * realValue : realValue;
+    }
+
+    // =========================================================================
+    // Terrain raycast adapted from wheel mount
+    // =====================================================================
+
+    private record TerrainCastResult(double distance, @NotNull Direction normal,
+                                     @Nullable SubLevel hitSubLevel, @Nullable BlockPos hitBlock) {
+    }
+
+    private TerrainCastResult castToTerrain(Vec3 wheelCenter, Vector3d forward, Pose3dc pose) {
+        double minDistance = 5.0;
+        Direction minNormal = Direction.UP;
+        SubLevel minHitSubLevel = null;
+        BlockPos minHitBlock = null;
+
+        for (int i = -1; i <= 1; i++) {
+            Vec3 origin = wheelCenter.add(JOMLConversion.toMojang(forward).scale(i));
+
+            ClipContext clipContext = new ClipContext(origin, origin.subtract(0.0, 5.0, 0.0),
+                    ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, CollisionContext.empty());
+            ((ClipContextExtension) clipContext).sable$setIgnoredSubLevel(Sable.HELPER.getContaining(this));
+            BlockHitResult clipResult = level.clip(clipContext);
+
+            if (clipResult.getType() == HitResult.Type.MISS) {
+                continue;
+            }
+
+            SubLevel hitSubLevel = Sable.HELPER.getContaining(level, clipResult.getLocation());
+            Vec3 localHitPos = pose.transformPositionInverse(hitSubLevel == null
+                    ? clipResult.getLocation()
+                    : hitSubLevel.logicalPose().transformPosition(clipResult.getLocation()));
+
+            if (localHitPos.y > wheelCenter.y || origin.distanceTo(localHitPos) < 0.05) {
+                continue;
+            }
+
+            double dist = wheelCenter.y - localHitPos.y;
+            if (dist <= 1.0e-5) {
+                continue;
+            }
+
+            Direction dir = clipResult.getDirection();
+            Vector3d hitNormal = new Vector3d(dir.getStepX(), dir.getStepY(), dir.getStepZ());
+            if (hitSubLevel != null) {
+                hitSubLevel.logicalPose().transformNormal(hitNormal);
+            }
+            pose.transformNormalInverse(hitNormal);
+            if (hitNormal.dot(0.0, 1.0, 0.0) < 0.5) {
+                continue;
+            }
+
+            if (dist < minDistance) {
+                minDistance = dist;
+                minNormal = clipResult.getDirection();
+                minHitSubLevel = hitSubLevel;
+                minHitBlock = clipResult.getBlockPos();
+            }
+        }
+
+        return new TerrainCastResult(minDistance, minNormal, minHitSubLevel, minHitBlock);
+    }
+
+    // ===============================================
+    // Engine interface
+    // ===================
+
+    // called by an engine block on the same sublevel as suspension. Once per game tick. Torque is per wheel
+    public void applyDriveTorque(double torquePerWheel, long gameTime) {
+        if (gameTime == driveTorqueGameTime) {
+            driveTorquePerWheel += torquePerWheel;
+        } else {
+            driveTorquePerWheel = torquePerWheel;
+            driveTorqueGameTime = gameTime;
+        }
+    }
+
+    // average signed wheel speed (rad/s)
+    public double averageDrivenOmega(int sign) {
+        double sum = 0.0;
+        int count = 0;
+        for (WheelSide side : WheelSide.values()) {
+            if (hasTire(side)) {
+                sum += getWheel(side).omega;
+                count++;
+            }
+        }
+        return count == 0 ? 0.0 : sum / count * sign;
+    }
+
+    public boolean hasAnyTire() {
+        return hasTire(WheelSide.LEFT) || hasTire(WheelSide.RIGHT);
+    }
+
+    public boolean hasTire(WheelSide side) {
+        return getTire(side).get(OffroadDataComponents.TIRE) != null;
+    }
+
+    // ===============================================================
+    // Tires
+    // =============
+
+    public ItemStack getTire(WheelSide side) {
+        return tires.get(side.ordinal());
+    }
+
+    public boolean installTire(WheelSide side, ItemStack stack) {
+        if (!getTire(side).isEmpty() || stack.get(OffroadDataComponents.TIRE) == null) {
+            return false;
+        }
+        tires.set(side.ordinal(), stack.copyWithCount(1));
+        notifyUpdate();
+        invalidateRenderBoundingBox();
+        return true;
+    }
+
+    public ItemStack removeTire(WheelSide side) {
+        ItemStack removed = tires.get(side.ordinal());
+        if (!removed.isEmpty()) {
+            tires.set(side.ordinal(), ItemStack.EMPTY);
+            getWheel(side).omega = 0.0;
+            notifyUpdate();
+            invalidateRenderBoundingBox();
+        }
+        return removed;
+    }
+
+    public NonNullList<ItemStack> getTires() {
+        return tires;
+    }
+
+    // =======================================================
+    // accessors
+    // =====================================
+
+
+    public SuspensionSetting getSetting() {
+        return setting;
+    }
+
+    // server-side, current steer angle of this axle (rad)
+    public double getSteerAngleRad() {
+        return chasingSteer;
+    }
+
+    public double getTireRadius() {
+        for (WheelSide side : WheelSide.values()) {
+            TireLike tire = getTire(side).get(OffroadDataComponents.TIRE);
+            if (tire != null) {
+                return tire.radius();
+            }
+        }
+        return 0.0;
+    }
+
+    public SuspensionSetting cycleSetting() {
+        setting = setting.next();
+        notifyUpdate();
+        return setting;
+    }
+
+    public Direction getFacing() {
+        return getBlockState().getValue(SuspensionBlock.FACING);
+    }
+
+    public Direction getSideDirection(WheelSide side) {
+        Direction facing = getFacing();
+        return side == WheelSide.LEFT ? facing.getCounterClockWise() : facing.getClockWise();
+    }
+
+    public WheelState getWheel(WheelSide side) {
+        return side == WheelSide.LEFT ? leftWheel : rightWheel;
+    }
+
+
+    // Renderer accessors
+    public float getLerpedSpringLength(WheelSide side, float partialTicks) {
+        WheelState w = getWheel(side);
+        return (float) Mth.lerp(partialTicks, w.lastClientSpringLength, w.clientSpringLength);
+    }
+
+    public float getLerpedAngle(WheelSide side, float partialTicks) {
+        WheelState w = getWheel(side);
+        return (float) Mth.lerp(partialTicks, w.lastAngle, w.angle);
+    }
+
+    public float getLerpedSteer(float partialTicks) {
+        return (float) Mth.lerp(partialTicks, lastChasingSteer, chasingSteer);
+    }
+
+    // Tire placement animation
+    public float getLerpedDeploy(WheelSide side, float partialTicks) {
+        WheelState w = getWheel(side);
+        return (float) Mth.lerp(partialTicks, w.lastDeploy, w.deploy);
     }
 
     @Override
     protected AABB createRenderBoundingBox() {
-        return new AABB(worldPosition).inflate(2.0D, 1.0D, 2.0D);
+        return new AABB(worldPosition).inflate(2.5, 2.0, 2.5);
     }
 
-    @Override
-    public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
-        controllers.add(new AnimationController<>(this, "axle", 0, state -> {
-            float animationSpeed = getWheelAnimationSpeed();
-            if (Math.abs(animationSpeed) <= 0.001F) {
-                state.setControllerSpeed(0.0F);
-                return state.setAndContinue(AXLE_ROTATION);
-            }
-
-            state.setControllerSpeed(Math.abs(animationSpeed));
-            return state.setAndContinue(animationSpeed < 0.0F ? AXLE_ROTATION_REVERSE : AXLE_ROTATION);
-        }));
-        controllers.add(new AnimationController<>(this, "left_suspension", 0, state -> {
-            if (!isSuspensionMoving(WheelMountSide.LEFT)) {
-                return PlayState.STOP;
-            }
-
-            state.setControllerSpeed(1.0F);
-            return state.setAndContinue(LEFT_SUSPENSION);
-        }));
-        controllers.add(new AnimationController<>(this, "right_suspension", 0, state -> {
-            if (!isSuspensionMoving(WheelMountSide.RIGHT)) {
-                return PlayState.STOP;
-            }
-
-            state.setControllerSpeed(1.0F);
-            return state.setAndContinue(RIGHT_SUSPENSION);
-        }));
-    }
-
-    public Direction getWheelMountDirection(WheelMountSide side) {
-        Direction.Axis axis = getBlockState().getValue(HorizontalAxisKineticBlock.HORIZONTAL_AXIS);
-        return switch (axis) {
-            case X -> side == WheelMountSide.LEFT ? Direction.NORTH : Direction.SOUTH;
-            case Z -> side == WheelMountSide.LEFT ? Direction.WEST : Direction.EAST;
-            default -> Direction.NORTH;
-        };
-    }
-
-    public BlockPos getWheelMountPosition(WheelMountSide side) {
-        return worldPosition.relative(getWheelMountDirection(side));
-    }
-
-    public boolean isWheelMountPosition(BlockPos pos) {
-        return pos.equals(getWheelMountPosition(WheelMountSide.LEFT))
-                || pos.equals(getWheelMountPosition(WheelMountSide.RIGHT));
-    }
-
-    public void setWheelCompression(WheelMountSide side, float compression) {
-        float clampedCompression = Math.clamp(compression / stiffness.getCompressionResistance(), 0.0F, 1.0F);
-
-        if (side == WheelMountSide.LEFT) {
-            if (Math.abs(leftCompression - clampedCompression) > 0.01F) {
-                leftSuspensionMovementTicks = SUSPENSION_MOVEMENT_TICKS;
-            }
-            leftCompression = clampedCompression;
-        } else {
-            if (Math.abs(rightCompression - clampedCompression) > 0.01F) {
-                rightSuspensionMovementTicks = SUSPENSION_MOVEMENT_TICKS;
-            }
-            rightCompression = clampedCompression;
-        }
-
-        setChanged();
-    }
-
-    public float getWheelCompression(WheelMountSide side) {
-        return side == WheelMountSide.LEFT ? leftCompression : rightCompression;
-    }
-
-    public SuspensionStiffness getStiffness() {
-        return stiffness;
-    }
-
-    public SuspensionStiffness cycleStiffness() {
-        stiffness = stiffness.next();
-        setChanged();
-        notifyUpdate();
-        return stiffness;
-    }
+    // ==============================================================
+    // NBT
+    // ===============================
 
     @Override
     protected void write(CompoundTag tag, HolderLookup.Provider registries, boolean clientPacket) {
         super.write(tag, registries, clientPacket);
-        tag.putFloat("LeftCompression", leftCompression);
-        tag.putFloat("RightCompression", rightCompression);
-        tag.putString("Stiffness", stiffness.name());
+        ContainerHelper.saveAllItems(tag, tires, registries);
+        CompoundTag controlsTag = new CompoundTag();
+        ContainerHelper.saveAllItems(controlsTag, controlItems, registries);
+        tag.put("Controls", controlsTag);
+        tag.putString("Setting", setting.name());
+        if (clientPacket) {
+            tag.putInt("SteerSignal", steerSignal);
+            tag.putFloat("LeftOmega", (float) leftWheel.omega);
+            tag.putFloat("RightOmega", (float) rightWheel.omega);
+            tag.putFloat("LeftSpring", (float) leftWheel.springLength);
+            tag.putFloat("RightSpring", (float) rightWheel.springLength);
+        }
     }
 
     @Override
     protected void read(CompoundTag tag, HolderLookup.Provider registries, boolean clientPacket) {
         super.read(tag, registries, clientPacket);
-        leftCompression = tag.getFloat("LeftCompression");
-        rightCompression = tag.getFloat("RightCompression");
-        if (tag.contains("Stiffness")) {
-            try {
-                stiffness = SuspensionStiffness.valueOf(tag.getString("Stiffness"));
-            } catch (IllegalArgumentException ignored) {
-                stiffness = SuspensionStiffness.MEDIUM;
-            }
+        for (int slot = 0; slot < tires.size(); slot++) {
+            tires.set(slot, ItemStack.EMPTY);
         }
-    }
+        ContainerHelper.loadAllItems(tag, tires, registries);
 
-    private float getWheelAnimationSpeed() {
-        return Math.clamp(getSpeed() / 48.0F, -2.5F, 2.5F);
-    }
-
-    private boolean isSuspensionMoving(WheelMountSide side) {
-        return side == WheelMountSide.LEFT ? leftSuspensionMovementTicks > 0 : rightSuspensionMovementTicks > 0;
-    }
-
-    private void tickSuspensionMovement() {
-        if (leftSuspensionMovementTicks > 0) {
-            leftSuspensionMovementTicks--;
+        for (int slot = 0; slot < CONTROL_SLOT_COUNT; slot++) {
+            controlItems.set(slot, ItemStack.EMPTY);
         }
-
-        if (rightSuspensionMovementTicks > 0) {
-            rightSuspensionMovementTicks--;
+        ContainerHelper.loadAllItems(tag.getCompound("Controls"), controlItems, registries);
+        for (int slot = 0; slot < CONTROL_SLOT_COUNT; slot++) {
+            controls.setItem(slot, controlItems.get(slot));
         }
-    }
+        refreshLinkNetwork();
 
-    @Override
-    public AnimatableInstanceCache getAnimatableInstanceCache() {
-        return animationCache;
+        try {
+            setting = SuspensionSetting.valueOf(tag.getString("Setting"));
+        } catch (IllegalArgumentException ignored) {
+            setting = SuspensionSetting.MEDIUM;
+        }
+        if (clientPacket) {
+            steerSignal = tag.getInt("SteerSignal");
+            leftWheel.omega = tag.getFloat("LeftOmega");
+            rightWheel.omega = tag.getFloat("RightOmega");
+            leftWheel.springLength = tag.getFloat("LeftSpring");
+            rightWheel.springLength = tag.getFloat("RightSpring");
+        }
     }
 }
