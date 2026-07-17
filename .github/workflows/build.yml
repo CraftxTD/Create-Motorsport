@@ -133,6 +133,8 @@ jobs:
           print(json.dumps(payload))
           ")
 
-          curl -sS -X POST "${DISCORD_WEBHOOK_URL}" \
-            -F "payload_json=${payload}" \
-            -F "file1=@${ARTIFACT_PATH};filename=${ARTIFACT_NAME}"
+          printf '%s' "${payload}" > discord_payload.json
+
+          curl -sS --fail-with-body -X POST "${DISCORD_WEBHOOK_URL}" \
+            -F "payload_json=<discord_payload.json;type=application/json" \
+            -F "file1=@${ARTIFACT_PATH};filename=${ARTIFACT_NAME};type=application/java-archive"
