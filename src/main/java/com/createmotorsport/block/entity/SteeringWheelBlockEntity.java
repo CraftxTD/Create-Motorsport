@@ -80,8 +80,9 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
     private static final Set<SteeringWheelBlockEntity> SERVER_LOADED =
             Collections.newSetFromMap(new WeakHashMap<>());
 
-    // for csv logs; ticks left, when it started, who receives the lines
+    // for csv logs; ticks left, ticks between rows, when it started, who receives the lines
     private int logTicksRemaining;
+    private int logSampleEveryTicks = 10;
     private long logStartGameTime;
     private UUID logRecipient;
 
@@ -364,8 +365,8 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
         return new CarActors(engine, suspensions, subLevel);
     }
 
-    // start log for (seconds), give to (player) as csv
-    public void startTelemetryLog(Player player, int seconds) {
+    // start log for (seconds), give to (player) as csv. samplesPerSec 1-20; 20 samples per second is needed for better debugging
+    public void startTelemetryLog(Player player, int seconds, int samplesPerSec) {
         if (level == null || level.isClientSide) {
             return;
         }
@@ -377,6 +378,7 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
         }
         logRecipient = player.getUUID();
         logTicksRemaining = seconds * 20;
+        logSampleEveryTicks = Math.max(1, 20 / Math.max(1, Math.min(20, samplesPerSec)));
         logStartGameTime = level.getGameTime();
         sendLine(TelemetryLinePacket.KIND_HEADER, buildHeader(car));
     }
@@ -385,7 +387,7 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
         if (logTicksRemaining <= 0) {
             return;
         }
-        if (logTicksRemaining % 10 == 0) {
+        if (logTicksRemaining % logSampleEveryTicks == 0) {
             CarActors car = gatherCar();
             if (car != null) {
                 sendLine(TelemetryLinePacket.KIND_ROW, buildRow(car));
@@ -410,7 +412,8 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
 
     private static final String[] WHEEL_COLS = {
             "grounded", "load_N", "slip_ratio", "slip_angle_deg", "vlon_ms", "vlat_ms", "Fx_N", "Fy_N",
-            "omega", "wheelspeed_ms", "spring_m", "compress_m", "mu", "steer_deg", "brake_Nm"
+            "omega", "wheelspeed_ms", "spring_m", "compress_m", "mu", "steer_deg", "brake_Nm",
+            "grip_mult", "drive_Nm"
     };
 
     private String buildHeader(CarActors car) {
@@ -464,11 +467,11 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
             for (SuspensionBlockEntity.WheelSide side : SuspensionBlockEntity.WheelSide.values()) {
                 SuspensionBlockEntity.WheelTelemetry t = s.getTelemetry(side);
                 sb.append(String.format(l,
-                        ",%d,%.1f,%.4f,%.3f,%.3f,%.3f,%.1f,%.1f,%.2f,%.3f,%.4f,%.4f,%.3f,%.2f,%.1f",
+                        ",%d,%.1f,%.4f,%.3f,%.3f,%.3f,%.1f,%.1f,%.2f,%.3f,%.4f,%.4f,%.3f,%.2f,%.1f,%.3f,%.2f",
                         t.grounded() ? 1 : 0, t.loadN(), t.slipRatio(), t.slipAngleDeg(),
                         t.vLonMs(), t.vLatMs(), t.longForceN(), t.latForceN(), t.omega(),
                         t.wheelSpeedMs(), t.springLenM(), t.compressionM(), t.surfaceMu(),
-                        steerDeg, t.brakeTorqueNm()));
+                        steerDeg, t.brakeTorqueNm(), t.gripMult(), t.driveTorqueNm()));
             }
         }
         return sb.toString();
