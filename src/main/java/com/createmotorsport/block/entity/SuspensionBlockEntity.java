@@ -131,7 +131,7 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
     public record WheelTelemetry(boolean grounded, double loadN, double slipRatio, double slipAngleDeg,
                                  double vLonMs, double vLatMs, double longForceN, double latForceN,
                                  double omega, double wheelSpeedMs, double springLenM, double compressionM,
-                                 double surfaceMu, double brakeTorqueNm) {
+                                 double surfaceMu, double brakeTorqueNm, double gripMult, double driveTorqueNm) {
     }
 
     public WheelTelemetry getTelemetry(WheelSide side) {
@@ -139,7 +139,7 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         return new WheelTelemetry(w.grounded, w.telemLoad, w.telemSlipRatio,
                 Math.toDegrees(w.telemSlipAngleRad), w.telemVLon, w.telemVLat, w.telemLongForce,
                 w.telemLatForce, w.omega, w.telemWheelSpeed, w.springLength, w.telemCompression,
-                w.surfaceMu * w.telemGripMult, w.telemBrakeTorque);
+                w.surfaceMu * w.telemGripMult, w.telemBrakeTorque, w.telemGripMult, driveTorquePerWheel);
     }
 
 
