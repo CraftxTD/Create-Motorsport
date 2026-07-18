@@ -104,12 +104,18 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
     private static final double BOOST_FACTOR = 1.25;   // overtake torque multiplier
     private static final double BOOST_DRAIN = 1.0 / (20 * 8);    // ~8 s of full boost
     private static final double BOOST_RECHARGE = 1.0 / (20 * 20); // ~20 s to refill
-    private static final double TC_TARGET_SLIP = 0.15; // begin cutting past this wheel slip
-    private static final double TC_GAIN = 1.5;
-    private static final double TC_MIN_FACTOR = 0.1;
+
+
+    // traction control, improved with closed loop control
+    private static final double TC_TARGET_SLIP = 0.12;   // slip ratio that makes peak grip
+    private static final double TC_DEADBAND = 0.02;      // leaves torque alone within target +/- this
+    private static final double TC_CUT_RATE = 8.0;
+    private static final double TC_RECOVER_RATE = 1.2;
+    private static final double TC_MIN_CAP = 0.05;
 
     private int powerMode = MAX_POWER_MODE; // 1 to 8;  torque caps at mode / MAX
     private boolean tractionControl;
+    private double tcTorqueCap = 1.0;       // closed-loop TC state: 0 to 1, of torque currently allowed
     private double boostReserve = 1.0;      // 0 to 1
     private boolean boosting;
 
@@ -364,17 +370,34 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
             boostReserve = Math.min(1.0, boostReserve + BOOST_RECHARGE);
         }
 
-        if (tractionControl && running && repRadius > 0.0) {
-            double wheelSurface = Math.abs(avgOmega) * repRadius;
-            double ground = Sable.HELPER.getVelocity(level, Vec3.atCenterOf(worldPosition)).length();
-            double slip = (wheelSurface - ground) / Math.max(ground, 2.0);
-            if (slip > TC_TARGET_SLIP) {
-                factor *= Mth.clamp(1.0 - (slip - TC_TARGET_SLIP) * TC_GAIN, TC_MIN_FACTOR, 1.0);
-            }
-        }
+        factor *= tractionControlCap(avgOmega, repRadius, running);
 
         telemPowerFactor = factor;
         return factor;
+    }
+
+    private double tractionControlCap(double avgOmega, double repRadius, boolean running) {
+        if (!tractionControl) {
+            tcTorqueCap = 1.0; // disabled, full power, and clean reset
+            return 1.0;
+        }
+        if (!running || repRadius <= 0.0) {
+            return tcTorqueCap; // cant measure so hold
+        }
+        double wheelSurface = Math.abs(avgOmega) * repRadius;
+        double ground = Sable.HELPER.getVelocity(level, Vec3.atCenterOf(worldPosition)).length();
+        double slip = ground > 0.5 ? (wheelSurface - ground) / ground
+                : (wheelSurface > 0.5 ? 1.0 : 0.0); // from a standstill any wheel motion is pure slip
+
+        double dt = 1.0 / 20.0;
+        double error = slip - TC_TARGET_SLIP;
+        if (error > TC_DEADBAND) {
+            tcTorqueCap -= TC_CUT_RATE * error * dt; // cuts harder the worse the slip
+        } else if (error < -TC_DEADBAND) {
+            tcTorqueCap += TC_RECOVER_RATE * dt;     // gripping again, ease power back in
+        }
+        tcTorqueCap = Mth.clamp(tcTorqueCap, TC_MIN_CAP, 1.0);
+        return tcTorqueCap;
     }
 
     public int getPowerMode() {
