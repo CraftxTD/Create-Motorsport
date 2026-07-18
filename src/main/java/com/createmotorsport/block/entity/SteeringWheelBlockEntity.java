@@ -89,9 +89,35 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
     private final Transmitter[] transmitters = new Transmitter[CONTROLS.length];
     private final boolean[] registered = new boolean[CONTROLS.length];
 
+    public enum DriveMode {
+        FWD("FWD"),
+        RWD("RWD"),
+        AWD("AWD");
+
+        private final String label;
+
+        DriveMode(String label) {
+            this.label = label;
+        }
+
+        public String getLabel() {
+            return label;
+        }
+
+        public DriveMode next() {
+            return values()[(ordinal() + 1) % values().length];
+        }
+    }
+
     // GLFW key codes which are bound to a given control by the player. -1 is unbound. Gets synced to client
     private final int[] keyCodes = new int[CONTROLS.length];
     private int inputMask;
+
+    // analog driver inputs
+    private float driverThrottle01;
+    private float driverBrake01;
+    private float driverSteer01;
+    private DriveMode driveMode = DriveMode.RWD;
     private UUID user;
 
     // for steering wheel animation, max turn degrees
@@ -204,16 +230,36 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
     private void stopUsing() {
         user = null;
         inputMask = 0;
+        driverThrottle01 = 0.0F;
+        driverBrake01 = 0.0F;
+        driverSteer01 = 0.0F;
         applyPowers();
         notifyUpdate();
     }
 
-    // server-side, receive the drivers pressed-control bitmask and rebroadcast the links
-    public void setInput(Player sender, int mask) {
+    public DriveMode getDriveMode() {
+        return driveMode;
+    }
+
+    // menu button that cycles FWD -> RWD -> AWD, sendData() syncs it
+    public void cycleDriveMode() {
+        if (level == null || level.isClientSide) {
+            return;
+        }
+        driveMode = driveMode.next();
+        setChanged();
+        sendData();
+    }
+
+    // server-side, receive the driver's controls: digital bitmask & analog throttle/brake/steer
+    public void setInput(Player sender, int mask, int throttle, int brake, int steer) {
         if (level == null || level.isClientSide || !isUser(sender)) {
             return;
         }
         inputMask = mask;
+        driverThrottle01 = Mth.clamp(throttle, 0, 100) / 100.0F;
+        driverBrake01 = Mth.clamp(brake, 0, 100) / 100.0F;
+        driverSteer01 = Mth.clamp(steer, -100, 100) / 100.0F;
         applyPowers();
     }
 
@@ -223,7 +269,15 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
         }
         for (SteeringControl control : CONTROLS) {
             boolean pressed = (inputMask & (1 << control.ordinal())) != 0;
-            transmitters[control.ordinal()].setPower(pressed ? 15 : 0);
+            // converting redstone backup signals to their 0-100% value
+            int power = switch (control) {
+                case THROTTLE -> Math.round(driverThrottle01 * 15.0F);
+                case BRAKE -> Math.round(driverBrake01 * 15.0F);
+                case STEER_LEFT -> driverSteer01 > 0.0F ? Math.round(driverSteer01 * 15.0F) : 0;
+                case STEER_RIGHT -> driverSteer01 < 0.0F ? Math.round(-driverSteer01 * 15.0F) : 0;
+                default -> pressed ? 15 : 0;
+            };
+            transmitters[control.ordinal()].setPower(power);
         }
     }
 
@@ -265,20 +319,17 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
         if (subLevel == null) {
             return;
         }
-        boolean throttle = (inputMask & (1 << SteeringControl.THROTTLE.ordinal())) != 0;
         boolean clutch = (inputMask & (1 << SteeringControl.CLUTCH.ordinal())) != 0;
         boolean shiftUp = (inputMask & (1 << SteeringControl.SHIFT_UP.ordinal())) != 0;
         boolean shiftDown = (inputMask & (1 << SteeringControl.SHIFT_DOWN.ordinal())) != 0;
-        boolean left = (inputMask & (1 << SteeringControl.STEER_LEFT.ordinal())) != 0;
-        boolean right = (inputMask & (1 << SteeringControl.STEER_RIGHT.ordinal())) != 0;
-        boolean braking = (inputMask & (1 << SteeringControl.BRAKE.ordinal())) != 0;
         boolean overtake = (inputMask & (1 << SteeringControl.OVERTAKE.ordinal())) != 0;
         boolean modeUp = (inputMask & (1 << SteeringControl.ENGINE_MODE_UP.ordinal())) != 0;
         boolean modeDown = (inputMask & (1 << SteeringControl.ENGINE_MODE_DOWN.ordinal())) != 0;
         boolean tractionControl = (inputMask & (1 << SteeringControl.TRACTION_CONTROL.ordinal())) != 0;
 
-        int steerSignal = (left ? 15 : 0) - (right ? 15 : 0);
-        int brakeSignal = braking ? 15 : 0;
+        float throttle01 = driverThrottle01;
+        double steerSignal = driverSteer01 * 15.0;
+        double brakeSignal = driverBrake01 * 15.0;
 
         EngineBlockEntity engine = null;
         List<SuspensionBlockEntity> suspensions = new ArrayList<>();
@@ -294,47 +345,23 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
             CreateMotorsport.LOGGER.info(
                     "[Wheel {}] driving mask={} engine={} suspensions={} steer={} brake={} throttle={}",
                     worldPosition, Integer.toBinaryString(inputMask), engine != null, suspensions.size(),
-                    steerSignal, brakeSignal, throttle);
+                    String.format("%.2f", steerSignal), String.format("%.2f", brakeSignal),
+                    String.format("%.2f", throttle01));
         }
 
         if (engine != null) {
-            engine.setDriverControls(throttle ? 1.0F : 0.0F, clutch, shiftUp, shiftDown);
+            engine.setDriverControls(throttle01, clutch, shiftUp, shiftDown);
             engine.setDriverAids(overtake, modeUp, modeDown, tractionControl);
+            engine.setDriveMode(driveMode);
         }
         if (suspensions.isEmpty()) {
             return;
         }
 
 
-        // determine steering axle with a centroid of the axles, and a forward axis using engine's facing direction
-        double cx = 0.0;
-        double cz = 0.0;
+        // now that front axle is set by user, steering axle is way easier to decide
         for (SuspensionBlockEntity s : suspensions) {
-            cx += s.getBlockPos().getX();
-            cz += s.getBlockPos().getZ();
-        }
-        cx /= suspensions.size();
-        cz /= suspensions.size();
-
-        double fx;
-        double fz;
-        if (engine != null) {
-            var fwd = engine.getFacing();
-            fx = fwd.getStepX();
-            fz = fwd.getStepZ();
-        } else {
-            fx = worldPosition.getX() - cx;
-            fz = worldPosition.getZ() - cz;
-        }
-        if ((worldPosition.getX() - cx) * fx + (worldPosition.getZ() - cz) * fz < 0) {
-            fx = -fx;
-            fz = -fz;
-        }
-
-        for (SuspensionBlockEntity s : suspensions) {
-            double d = (s.getBlockPos().getX() - cx) * fx + (s.getBlockPos().getZ() - cz) * fz;
-            boolean frontAxle = d > 0.5;
-            s.setDriverSteering(frontAxle ? steerSignal : 0, brakeSignal);
+            s.setDriverSteering(s.isFrontAxle() ? steerSignal : 0.0, brakeSignal);
         }
     }
 
@@ -701,6 +728,7 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
         }
         tag.put("Frequencies", freqs);
         tag.putIntArray("KeyCodes", keyCodes.clone());
+        tag.putString("DriveMode", driveMode.name());
         if (user != null) {
             tag.putUUID("User", user);
         }
@@ -734,6 +762,11 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
         int[] saved = tag.getIntArray("KeyCodes");
         for (int i = 0; i < keyCodes.length && i < saved.length; i++) {
             keyCodes[i] = saved[i];
+        }
+        try {
+            driveMode = DriveMode.valueOf(tag.getString("DriveMode"));
+        } catch (IllegalArgumentException ignored) {
+            driveMode = DriveMode.RWD;
         }
         user = tag.hasUUID("User") ? tag.getUUID("User") : null;
         if (clientPacket) {

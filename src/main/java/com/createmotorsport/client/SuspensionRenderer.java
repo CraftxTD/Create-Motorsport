@@ -25,7 +25,7 @@ import org.joml.Vector3f;
 
 // Renders the tires when placed by player, same way aero does it
 public class SuspensionRenderer implements BlockEntityRenderer<SuspensionBlockEntity> {
-    private static final float SPIN_SIGN = 1.0F;
+    private static final float SPIN_SIGN = -1.0F;
     private static final float STEER_SIGN = 1.0F;
 
     private static final float DROP_HEIGHT = 0.5F;

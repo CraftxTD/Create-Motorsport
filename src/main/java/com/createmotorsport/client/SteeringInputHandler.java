@@ -26,6 +26,9 @@ public final class SteeringInputHandler {
     private static BlockPos activePos;
     private static int[] activeKeyCodes = new int[0];
     private static int lastSentMask = -1;
+    private static int lastThrottle = -1;
+    private static int lastBrake = -1;
+    private static int lastSteer = -999;
 
     private SteeringInputHandler() {
     }
@@ -44,6 +47,9 @@ public final class SteeringInputHandler {
         activePos = pos.immutable();
         HELD_KEYS.clear();
         lastSentMask = -1;
+        lastThrottle = -1;
+        lastBrake = -1;
+        lastSteer = -999;
         PacketDistributor.sendToServer(new SetDrivingPacket(activePos, true));
     }
 
@@ -101,19 +107,56 @@ public final class SteeringInputHandler {
             activeKeyCodes[i] = wheel.getKeyCode(i);
         }
 
+        GamepadInput.poll();
+
         int mask = 0;
         for (int i = 0; i < activeKeyCodes.length; i++) {
-            if (activeKeyCodes[i] >= 0 && HELD_KEYS.contains(activeKeyCodes[i])) {
+            if (isControlDown(activeKeyCodes[i])) {
                 mask |= (1 << i);
             }
         }
 
-        if (mask != lastSentMask) {
+        float throttle = strength(SteeringControl.THROTTLE);
+        float brake = strength(SteeringControl.BRAKE);
+        float steer = strength(SteeringControl.STEER_LEFT) - strength(SteeringControl.STEER_RIGHT);
+
+        int throttlePct = Math.round(Math.min(1.0F, throttle) * 100.0F);
+        int brakePct = Math.round(Math.min(1.0F, brake) * 100.0F);
+        int steerPct = Math.round(Math.max(-1.0F, Math.min(1.0F, steer)) * 100.0F);
+
+        if (mask != lastSentMask || Math.abs(throttlePct - lastThrottle) >= 2
+                || Math.abs(brakePct - lastBrake) >= 2 || Math.abs(steerPct - lastSteer) >= 2) {
             lastSentMask = mask;
-            PacketDistributor.sendToServer(new SteeringInputPacket(activePos, mask));
+            lastThrottle = throttlePct;
+            lastBrake = brakePct;
+            lastSteer = steerPct;
+            PacketDistributor.sendToServer(new SteeringInputPacket(activePos, mask, throttlePct, brakePct, steerPct));
         }
 
         showActionBar(player, mask);
+    }
+
+    private static boolean isControlDown(int code) {
+        if (code < 0) {
+            return false;
+        }
+        return GamepadCodes.isGamepadCode(code) ? GamepadInput.isDown(code) : HELD_KEYS.contains(code);
+    }
+
+    // analog strength, keypress or button is just 1
+    private static float strength(SteeringControl control) {
+        int idx = control.ordinal();
+        if (idx >= activeKeyCodes.length) {
+            return 0.0F;
+        }
+        int code = activeKeyCodes[idx];
+        if (code < 0) {
+            return 0.0F;
+        }
+        if (GamepadCodes.isGamepadCode(code)) {
+            return GamepadInput.analogMagnitude(code);
+        }
+        return HELD_KEYS.contains(code) ? 1.0F : 0.0F;
     }
 
     public static void onScreenOpening(ScreenEvent.Opening event) {
@@ -166,8 +209,11 @@ public final class SteeringInputHandler {
         activeKeyCodes = new int[0];
         HELD_KEYS.clear();
         lastSentMask = -1;
+        lastThrottle = -1;
+        lastBrake = -1;
+        lastSteer = -999;
         if (pos != null && Minecraft.getInstance().player != null) {
-            PacketDistributor.sendToServer(new SteeringInputPacket(pos, 0));
+            PacketDistributor.sendToServer(new SteeringInputPacket(pos, 0, 0, 0, 0));
             PacketDistributor.sendToServer(new SetDrivingPacket(pos, false));
         }
     }

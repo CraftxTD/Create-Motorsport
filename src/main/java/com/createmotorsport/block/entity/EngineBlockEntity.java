@@ -90,6 +90,8 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
 
     // signal from our steering wheel that takes precedence over redstone
     private final int[] driverSignals = new int[CHANNELS.length];
+    private float driverThrottle01;
+    private SteeringWheelBlockEntity.DriveMode driveMode = SteeringWheelBlockEntity.DriveMode.RWD;
     private long driverSignalTime = Long.MIN_VALUE;
 
     // values for csv logging
@@ -196,6 +198,9 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
                         || suspension.isRemoved() || !suspension.hasAnyTire()) {
                     continue;
                 }
+                if (!isDrivenAxle(suspension)) {
+                    continue; // for AWD/RWD/FWD differences, drives freely without affecting RPM
+                }
                 axles.add(suspension);
                 if (repRadius <= 0.0) {
                     repRadius = suspension.getTireRadius();
@@ -275,7 +280,7 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
 
     private float getTargetThrottle() {
         if (driverActive()) {
-            return Mth.clamp(driverSignals[ControlChannel.THROTTLE.ordinal()] / 15.0F, 0.0F, 1.0F);
+            return Mth.clamp(driverThrottle01, 0.0F, 1.0F);
         }
         if (!hasLink(ControlChannel.THROTTLE)) {
             return 0.0F;
@@ -310,11 +315,28 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
         if (level == null || level.isClientSide) {
             return;
         }
-        driverSignals[ControlChannel.THROTTLE.ordinal()] = Math.round(Mth.clamp(throttle01, 0.0F, 1.0F) * 15);
+        driverThrottle01 = Mth.clamp(throttle01, 0.0F, 1.0F);
+        driverSignals[ControlChannel.THROTTLE.ordinal()] = Math.round(driverThrottle01 * 15); // for the debug readout
         driverSignals[ControlChannel.CLUTCH.ordinal()] = clutch ? 15 : 0;
         driverSignals[ControlChannel.SHIFT_UP.ordinal()] = shiftUp ? 15 : 0;
         driverSignals[ControlChannel.SHIFT_DOWN.ordinal()] = shiftDown ? 15 : 0;
         driverSignalTime = level.getGameTime();
+    }
+
+    // steering wheel pushes chosen drive layout (RWD/FWD/AWD) here
+    public void setDriveMode(SteeringWheelBlockEntity.DriveMode mode) {
+        if (mode != null) {
+            this.driveMode = mode;
+        }
+    }
+
+    // Does this axle get engine torque under the current drive mode
+    private boolean isDrivenAxle(SuspensionBlockEntity suspension) {
+        return switch (driveMode) {
+            case AWD -> true;
+            case RWD -> !suspension.isFrontAxle();
+            case FWD -> suspension.isFrontAxle();
+        };
     }
 
     // driving aids that affect torque: engine mode, overtake boost, traction control. Pushed here from steering wheel

@@ -1,5 +1,6 @@
 package com.createmotorsport.block.entity;
 
+import com.createmotorsport.Config;
 import com.createmotorsport.CreateMotorsport;
 import com.createmotorsport.block.SuspensionBlock;
 import com.createmotorsport.physics.TireModel;
@@ -194,19 +195,22 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
     private final IRedstoneLinkable[] channelLinks = new IRedstoneLinkable[CHANNELS.length];
 
 
-    private int driverSteer;   // -15 to 15, + is left
-    private int driverBrake;   // 0 to 15
+    private double driverSteer; // -15 to 15, + is left
+    private double driverBrake; // 0 to 15
     private long driverControlTime = Long.MIN_VALUE;
 
     private SuspensionSetting setting = SuspensionSetting.MEDIUM;
     private double driveTorquePerWheel;
     private long driveTorqueGameTime = Long.MIN_VALUE;
     private double brake01;
-    private int steerSignal;
+    private double steerSignal;
     private double chasingSteer;
     private double lastChasingSteer;
     private int syncCooldown;
     private boolean syncDirty;
+
+    // defaults to rear axle, which means the user does need to change the other to 'front' for now, will fix later
+    private boolean frontAxle;
 
     public SuspensionBlockEntity(BlockPos pos, BlockState state) {
         super(CreateMotorsport.SUSPENSION_BLOCK_ENTITY.get(), pos, state);
@@ -260,12 +264,27 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
     // Steering chanels & redstone links
     // ==========================
 
-    public void setDriverSteering(int steer, int brake) {
+
+    public boolean isFrontAxle() {
+        return frontAxle;
+    }
+
+    // Toggle front/rear from the menu; sendData() pushes the new state to clients for the button's label
+    public void toggleAxleEnd() {
         if (level == null || level.isClientSide) {
             return;
         }
-        driverSteer = Mth.clamp(steer, -15, 15);
-        driverBrake = Mth.clamp(brake, 0, 15);
+        frontAxle = !frontAxle;
+        setChanged();
+        sendData();
+    }
+
+    public void setDriverSteering(double steer, double brake) {
+        if (level == null || level.isClientSide) {
+            return;
+        }
+        driverSteer = Mth.clamp(steer, -15.0, 15.0);
+        driverBrake = Mth.clamp(brake, 0.0, 15.0);
         driverControlTime = level.getGameTime();
     }
 
@@ -398,7 +417,7 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
 
         // trying to auto recognize steering signal on the same sub-level
         Direction facing = getFacing();
-        int newSteer;
+        double newSteer;
         double newBrake;
         if (driverActive()) {
             newSteer = driverSteer;
@@ -412,7 +431,7 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
             int adjacentBrake = level.getSignal(worldPosition.above(), Direction.UP);
             newBrake = Math.max(adjacentBrake, channelSignal(SteerChannel.BRAKE)) / 15.0;
         }
-        if (newSteer != steerSignal) {
+        if (Math.abs(newSteer - steerSignal) > 0.05) {
             steerSignal = newSteer;
             syncDirty = true;
         }
@@ -483,9 +502,41 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         boolean queued = false;
         queued |= stepWheel(WheelSide.LEFT, pose, massData, timeStep);
         queued |= stepWheel(WheelSide.RIGHT, pose, massData, timeStep);
+        applyDifferential(timeStep);
         if (queued) {
             QUEUED.add(this);
         }
+    }
+
+
+    // Limited-slip differential model from vdrift (driveline.h solveDiffClutch2)
+    // the velocity constraint pulls the two wheels torward a shared speed, but the corrective torque is capped by
+    // an anti-slip limit so it slips instead of locking. antiSlip=0 is open differentials, big number is a spool
+    private void applyDifferential(double dt) {
+        if (!hasTire(WheelSide.LEFT) || !hasTire(WheelSide.RIGHT)) {
+            return;
+        }
+        double antiSlip = Config.DIFFERENTIAL_ANTISLIP_TORQUE.getAsDouble();
+        if (antiSlip <= 0.0) {
+            return;
+        }
+        double inertiaL = wheelInertia(WheelSide.LEFT);
+        double inertiaR = wheelInertia(WheelSide.RIGHT);
+
+        // equal and opposite impulse driving two wheels to the same speed, clamped by anti-slip torque budget for the substep
+        double velErr = leftWheel.omega - rightWheel.omega;
+        double jointInertia = 1.0 / (1.0 / inertiaL + 1.0 / inertiaR);
+        double limit = antiSlip * dt;
+        double lambda = Mth.clamp(-velErr * jointInertia, -limit, limit);
+
+        leftWheel.omega += lambda / inertiaL;
+        rightWheel.omega -= lambda / inertiaR;
+    }
+
+    private double wheelInertia(WheelSide side) {
+        TireLike tire = getTire(side).get(OffroadDataComponents.TIRE);
+        double radius = tire != null ? tire.radius() : REST_LENGTH;
+        return Math.max(0.5, 5.0 * radius * radius * radius * radius);
     }
 
     private boolean stepWheel(WheelSide side, Pose3d pose, MassData massData, double dt) {
@@ -842,8 +893,9 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         ContainerHelper.saveAllItems(controlsTag, controlItems, registries);
         tag.put("Controls", controlsTag);
         tag.putString("Setting", setting.name());
+        tag.putBoolean("FrontAxle", frontAxle);
         if (clientPacket) {
-            tag.putInt("SteerSignal", steerSignal);
+            tag.putDouble("SteerSignal", steerSignal);
             tag.putFloat("LeftOmega", (float) leftWheel.omega);
             tag.putFloat("RightOmega", (float) rightWheel.omega);
             tag.putFloat("LeftSpring", (float) leftWheel.springLength);
@@ -873,8 +925,9 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         } catch (IllegalArgumentException ignored) {
             setting = SuspensionSetting.MEDIUM;
         }
+        frontAxle = tag.getBoolean("FrontAxle");
         if (clientPacket) {
-            steerSignal = tag.getInt("SteerSignal");
+            steerSignal = tag.getDouble("SteerSignal");
             leftWheel.omega = tag.getFloat("LeftOmega");
             rightWheel.omega = tag.getFloat("RightOmega");
             leftWheel.springLength = tag.getFloat("LeftSpring");

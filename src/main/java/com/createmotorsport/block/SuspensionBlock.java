@@ -120,16 +120,11 @@ public class SuspensionBlock extends HorizontalDirectionalBlock implements Entit
             return InteractionResult.sidedSuccess(level.isClientSide);
         }
 
-        if (!level.isClientSide) {
+        if (!level.isClientSide && level.getBlockEntity(pos) instanceof SuspensionBlockEntity be) {
             player.openMenu(new SimpleMenuProvider(
-                    (containerId, playerInventory, menuPlayer) -> {
-                        if (level.getBlockEntity(pos) instanceof SuspensionBlockEntity be) {
-                            return new SuspensionMenu(containerId, playerInventory, be);
-                        }
-                        return new SuspensionMenu(containerId, playerInventory);
-                    },
+                    (containerId, playerInventory, menuPlayer) -> new SuspensionMenu(containerId, playerInventory, be),
                     STEERING_TITLE
-            ));
+            ), pos); // writes position so the client menu can target this suspension
         }
         return InteractionResult.sidedSuccess(level.isClientSide);
     }

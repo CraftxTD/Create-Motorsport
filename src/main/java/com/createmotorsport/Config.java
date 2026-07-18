@@ -13,5 +13,9 @@ public class Config {
             .comment("Tuning for torque maths, to account for Minecraft scale car mass")
             .defineInRange("drivetrainTorqueScale", 0.016, 0.0001, 10.0);
 
+    public static final ModConfigSpec.DoubleValue DIFFERENTIAL_ANTISLIP_TORQUE = BUILDER
+            .comment("0 = open differential, 200+ is like a near-locked spool")
+            .defineInRange("differentialAntiSlipTorque", 200.0, 0.0, 100000.0);
+
     static final ModConfigSpec SPEC = BUILDER.build();
 }

@@ -3,6 +3,7 @@ package com.createmotorsport.client;
 import com.createmotorsport.block.entity.SteeringWheelBlockEntity;
 import com.createmotorsport.block.entity.SteeringWheelBlockEntity.SteeringControl;
 import com.createmotorsport.menu.SteeringWheelMenu;
+import com.createmotorsport.network.SetDriveModePacket;
 import com.createmotorsport.network.SetSteeringKeyPacket;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
@@ -35,6 +36,9 @@ public class SteeringWheelScreen extends AbstractContainerScreen<SteeringWheelMe
     private static final int BTN_W = 74;
     private static final int BTN_H = 14;
     private static final int BTN_Y = 4;
+    // "Drive: FWD/RWD/AWD" button, just below it
+    private static final int MODE_Y = BTN_Y + BTN_H + 2;
+    private static final int MODE_COLOR = 0xFF3A4A5A;
 
     private int capturingControl = -1;
 
@@ -91,6 +95,28 @@ public class SteeringWheelScreen extends AbstractContainerScreen<SteeringWheelMe
         g.fill(bx, by + BTN_H - 1, bx + BTN_W, by + BTN_H, BORDER);
         String label = driving ? "Stop Driving" : "Start Driving";
         g.drawString(font, label, bx + (BTN_W - font.width(label)) / 2, by + 3, 0xFFFFFFFF, false);
+
+        int my2 = t + MODE_Y;
+        g.fill(bx, my2, bx + BTN_W, my2 + BTN_H, MODE_COLOR);
+        g.fill(bx, my2, bx + BTN_W, my2 + 1, BORDER);
+        g.fill(bx, my2 + BTN_H - 1, bx + BTN_W, my2 + BTN_H, BORDER);
+        String modeLabel = "Drive: " + driveModeLabel();
+        g.drawString(font, modeLabel, bx + (BTN_W - font.width(modeLabel)) / 2, my2 + 3, 0xFFFFFFFF, false);
+    }
+
+    private String driveModeLabel() {
+        BlockPos pos = menu.getWheelPos();
+        if (pos != null && Minecraft.getInstance().level != null
+                && Minecraft.getInstance().level.getBlockEntity(pos) instanceof SteeringWheelBlockEntity wheel) {
+            return wheel.getDriveMode().getLabel();
+        }
+        return "RWD";
+    }
+
+    private boolean modeButtonAt(double mx, double my) {
+        int bx = leftPos + imageWidth - BTN_W - 6;
+        int by = topPos + MODE_Y;
+        return mx >= bx && mx < bx + BTN_W && my >= by && my < by + BTN_H;
     }
 
     private void drawSlot(GuiGraphics g, int x, int y, int tint) {
@@ -119,6 +145,13 @@ public class SteeringWheelScreen extends AbstractContainerScreen<SteeringWheelMe
             }
             return true;
         }
+        if (button == 0 && modeButtonAt(mx, my)) {
+            BlockPos pos = menu.getWheelPos();
+            if (pos != null) {
+                PacketDistributor.sendToServer(new SetDriveModePacket(pos));
+            }
+            return true;
+        }
         int bindHit = bindButtonAt(mx, my);
         if (bindHit >= 0) {
             if (button == 1) {
@@ -126,10 +159,26 @@ public class SteeringWheelScreen extends AbstractContainerScreen<SteeringWheelMe
                 capturingControl = -1;
             } else {
                 capturingControl = capturingControl == bindHit ? -1 : bindHit;
+                if (capturingControl >= 0) {
+                    GamepadInput.beginCapture(); // baseline so held stick/trigger isn't grabbed instantly
+                }
             }
             return true;
         }
         return super.mouseClicked(mx, my, button);
+    }
+
+    @Override
+    protected void containerTick() {
+        super.containerTick();
+        // adds gamepad capture listening too
+        if (capturingControl >= 0) {
+            int code = GamepadInput.pollCapture();
+            if (code >= 0) {
+                sendKey(capturingControl, code);
+                capturingControl = -1;
+            }
+        }
     }
 
     @Override
@@ -191,6 +240,9 @@ public class SteeringWheelScreen extends AbstractContainerScreen<SteeringWheelMe
     private static String keyName(int keyCode) {
         if (keyCode < 0) {
             return "(none)";
+        }
+        if (GamepadCodes.isGamepadCode(keyCode)) {
+            return GamepadCodes.name(keyCode);
         }
         String glfwName = GLFW.glfwGetKeyName(keyCode, 0);
         if (glfwName != null && !glfwName.isEmpty()) {

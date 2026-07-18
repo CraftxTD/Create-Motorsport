@@ -10,9 +10,11 @@ import com.createmotorsport.item.SuspensionWrenchItem;
 import com.createmotorsport.menu.EngineMenu;
 import com.createmotorsport.menu.SteeringWheelMenu;
 import com.createmotorsport.menu.SuspensionMenu;
+import com.createmotorsport.network.SetDriveModePacket;
 import com.createmotorsport.network.SetDrivingPacket;
 import com.createmotorsport.network.SetSteeringKeyPacket;
 import com.createmotorsport.network.StartTelemetryLogPacket;
+import com.createmotorsport.network.ToggleAxleEndPacket;
 import com.createmotorsport.network.SteeringInputPacket;
 import com.createmotorsport.network.TelemetryLinePacket;
 import com.mojang.logging.LogUtils;
@@ -154,7 +156,7 @@ public class CreateMotorsport {
     );
     public static final DeferredHolder<MenuType<?>, MenuType<SuspensionMenu>> SUSPENSION_MENU = MENUS.register(
             "suspension",
-            () -> new MenuType<>(SuspensionMenu::new, FeatureFlags.VANILLA_SET)
+            () -> IMenuTypeExtension.create((id, inv, buf) -> new SuspensionMenu(id, inv, buf.readBlockPos()))
     );
     public static final DeferredHolder<MenuType<?>, MenuType<SteeringWheelMenu>> STEERING_WHEEL_MENU = MENUS.register(
             "steering_wheel",
@@ -218,6 +220,8 @@ public class CreateMotorsport {
         registrar.playToServer(SetSteeringKeyPacket.TYPE, SetSteeringKeyPacket.CODEC, SetSteeringKeyPacket::handle);
         registrar.playToServer(SetDrivingPacket.TYPE, SetDrivingPacket.CODEC, SetDrivingPacket::handle);
         registrar.playToServer(StartTelemetryLogPacket.TYPE, StartTelemetryLogPacket.CODEC, StartTelemetryLogPacket::handle);
+        registrar.playToServer(SetDriveModePacket.TYPE, SetDriveModePacket.CODEC, SetDriveModePacket::handle);
+        registrar.playToServer(ToggleAxleEndPacket.TYPE, ToggleAxleEndPacket.CODEC, ToggleAxleEndPacket::handle);
         registrar.playToClient(TelemetryLinePacket.TYPE, TelemetryLinePacket.CODEC, TelemetryLinePacket::handle);
     }
 

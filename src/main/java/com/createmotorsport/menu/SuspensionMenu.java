@@ -3,6 +3,7 @@ package com.createmotorsport.menu;
 import com.createmotorsport.CreateMotorsport;
 import com.createmotorsport.block.entity.SuspensionBlockEntity;
 import com.createmotorsport.block.entity.SuspensionBlockEntity.SteerChannel;
+import net.minecraft.core.BlockPos;
 import net.minecraft.world.Container;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.entity.player.Inventory;
@@ -30,17 +31,19 @@ public class SuspensionMenu extends AbstractContainerMenu {
     public static final int HOTBAR_Y = INV_Y + 58;
 
     private final Container controls;
+    private final BlockPos suspensionPos;
 
-    public SuspensionMenu(int containerId, Inventory playerInventory) {
-        this(containerId, playerInventory, new SimpleContainer(CONTROL_SLOT_COUNT), null);
+    public SuspensionMenu(int containerId, Inventory playerInventory, BlockPos pos) {
+        this(containerId, playerInventory, new SimpleContainer(CONTROL_SLOT_COUNT), pos);
     }
 
     public SuspensionMenu(int containerId, Inventory playerInventory, SuspensionBlockEntity suspension) {
-        this(containerId, playerInventory, suspension.getControls(), suspension);
+        this(containerId, playerInventory, suspension.getControls(), suspension.getBlockPos());
     }
 
-    private SuspensionMenu(int containerId, Inventory playerInventory, Container controls, SuspensionBlockEntity suspension) {
+    private SuspensionMenu(int containerId, Inventory playerInventory, Container controls, BlockPos pos) {
         super(CreateMotorsport.SUSPENSION_MENU.get(), containerId);
+        this.suspensionPos = pos;
         checkContainerSize(controls, CONTROL_SLOT_COUNT);
         this.controls = controls;
         controls.startOpen(playerInventory.player);
@@ -70,6 +73,10 @@ public class SuspensionMenu extends AbstractContainerMenu {
         public int getMaxStackSize() {
             return 1;
         }
+    }
+
+    public BlockPos getSuspensionPos() {
+        return suspensionPos;
     }
 
     @Override
