@@ -59,8 +59,8 @@ import java.util.Collection;
 import java.util.List;
 
 public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEntitySubLevelActor, GeoBlockEntity {
-    public static final double REST_LENGTH = 0.65;
-    public static final double MAX_TRAVEL = 0.45;
+    public static final double REST_LENGTH = 7.0 / 16.0;
+    public static final double MAX_TRAVEL = 0.25;
     public static final double MAX_DROOP_RENDER = 0.15;
     private static final double MAX_STEER_RAD = Math.toRadians(32.0);
     private static final double GROUND_MARGIN = 0.15;

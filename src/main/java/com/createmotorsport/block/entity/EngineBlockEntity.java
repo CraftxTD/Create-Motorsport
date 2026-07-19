@@ -25,7 +25,6 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.ContainerHelper;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.phys.Vec3;
@@ -75,7 +74,7 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
     private static final int BURN_TICKS = 100;
     private static final int SOUND_INTERVAL = 8;
 
-    private final DrivetrainSim drivetrain = new DrivetrainSim(EngineSpec.RACING_V6_HYBRID);
+    private final DrivetrainSim drivetrain = new DrivetrainSim(EngineSpec.RACING_V8_HYBRID);
 
     private int burnTicks;
     private int soundCooldown;

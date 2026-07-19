@@ -20,10 +20,10 @@ public record EngineSpec(
 ) {
 
     // still working on tuning this
-    public static final EngineSpec RACING_V6_HYBRID = new EngineSpec(
-            3000, 15000, 420,
-            new double[]{3.20, 2.49, 2.00, 1.67, 1.44, 1.26, 1.12, 1.00},
-            3.20, 14.0, 13500, 8500, 0.93
+    public static final EngineSpec RACING_V8_HYBRID = new EngineSpec(
+            5000, 18000, 420,
+            new double[]{3.20, 2.49, 2.00, 1.67, 1.44, 1.26, 1.00},
+            3.20, 14.0, 16000, 11000, 0.93
     );
 
     public double overallRatio(int gear) {
@@ -39,33 +39,36 @@ public record EngineSpec(
     }
 
 
-    // Crank torque in (Nm) at full throttle, including rev limiter. Attempted to model realistic weak idle,
-    // flat peak through the mid range and taper to the limiter
+    // Crank torque in (Nm) at full throttle for a 2011 F1 2.4L V8
+
     public double torqueAt(double rpm) {
         if (rpm >= this.redlineRpm) {
             return 0.0;
         }
         if (rpm <= 0.0) {
-            return 0.30 * this.peakTorque;
+            return 0.20 * this.peakTorque;
         }
 
         double idleFrac = this.idleRpm / this.redlineRpm;
         double n = rpm / this.redlineRpm;
-        double peakStart = 0.45;
-        double peakEnd = 0.80;
+
+        double powerBandEntry = 0.55;
+        double peakStart = 0.92;
 
         double factor;
         if (n < idleFrac) {
-            factor = Mth.lerp(n / idleFrac, 0.30, 0.55);
+            factor = Mth.lerp(n / idleFrac, 0.20, 0.38);
+        } else if (n < powerBandEntry) {
+            factor = Mth.lerp((n - idleFrac) / (powerBandEntry - idleFrac), 0.38, 0.65);
         } else if (n < peakStart) {
-            factor = Mth.lerp((n - idleFrac) / (peakStart - idleFrac), 0.55, 1.0);
-        } else if (n < peakEnd) {
-            factor = 1.0;
+            factor = Mth.lerp((n - powerBandEntry) / (peakStart - powerBandEntry), 0.65, 1.0);
         } else {
-            factor = Mth.lerp((n - peakEnd) / (1.0 - peakEnd), 1.0, 0.82);
+            factor = 1.0;
         }
+
         return factor * this.peakTorque;
     }
+
 
 
     // Passive drag form the engine when throttle is closed, in newton-meters (Nm)

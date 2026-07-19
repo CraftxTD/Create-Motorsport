@@ -9,7 +9,6 @@ public final class DrivetrainSim {
     public static final int GEAR_REVERSE = 0;
     public static final int GEAR_NEUTRAL = 1;
     public static final int GEAR_FIRST = 2;
-    private static final int GEAR_MAX = 9; // 8th
 
     // from speed dreams, how quickly clutch re-engages after being disengaged, in seconds
     private static final double CLUTCH_ENGAGE_TIME = 0.4;
@@ -21,6 +20,8 @@ public final class DrivetrainSim {
     private static final double LAUNCH_FLARE_FRAC = 0.42;
 
     private final EngineSpec spec;
+
+    private final int maxGear;
 
     private double rpm;
     private int gear = GEAR_NEUTRAL;
@@ -35,6 +36,7 @@ public final class DrivetrainSim {
 
     public DrivetrainSim(EngineSpec spec) {
         this.spec = spec;
+        this.maxGear = GEAR_FIRST + spec.topGear();
         this.rpm = spec.idleRpm();
     }
 
@@ -63,7 +65,7 @@ public final class DrivetrainSim {
         boolean canShift = semiAuto || clutchHeld;
         if (canShift) {
             if (shiftUpEdge) {
-                this.gear = Math.min(GEAR_MAX, this.gear + 1);
+                this.gear = Math.min(this.maxGear, this.gear + 1);
                 if (semiAuto) this.shiftReleaseTimer = SHIFT_RELEASE_TIME;
             } else if (shiftDownEdge) {
                 this.gear = Math.max(GEAR_REVERSE, this.gear - 1);
@@ -191,6 +193,6 @@ public final class DrivetrainSim {
 
     public void load(CompoundTag tag) {
         this.rpm = tag.getDouble("Rpm");
-        this.gear = Mth.clamp(tag.getInt("Gear"), GEAR_REVERSE, GEAR_MAX);
+        this.gear = Mth.clamp(tag.getInt("Gear"), GEAR_REVERSE, this.maxGear);
     }
 }

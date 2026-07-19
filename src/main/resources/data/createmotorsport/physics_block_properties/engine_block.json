@@ -1,0 +1,7 @@
+{
+  "selector": "createmotorsport:engine_block",
+
+  "properties": {
+    "sable:mass": 12.0
+  }
+}
