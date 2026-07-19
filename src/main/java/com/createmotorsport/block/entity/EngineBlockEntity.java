@@ -105,17 +105,15 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
     private static final double BOOST_DRAIN = 1.0 / (20 * 8);    // ~8 s of full boost
     private static final double BOOST_RECHARGE = 1.0 / (20 * 20); // ~20 s to refill
 
-
-    // traction control, improved with closed loop control
-    private static final double TC_TARGET_SLIP = 0.12;   // slip ratio that makes peak grip
-    private static final double TC_DEADBAND = 0.02;      // leaves torque alone within target +/- this
-    private static final double TC_CUT_RATE = 8.0;
-    private static final double TC_RECOVER_RATE = 1.2;
-    private static final double TC_MIN_CAP = 0.05;
+    // Traction control model replaced with Vdrift's ApplyTCS
+    private static final double TC_IDEAL_SLIP = 0.12;
+    private static final double TC_ENGAGE = 1.2;
+    private static final double TC_DISENGAGE = 0.8;
+    private static final double TC_GAIN = 2.0;
 
     private int powerMode = MAX_POWER_MODE; // 1 to 8;  torque caps at mode / MAX
     private boolean tractionControl;
-    private double tcTorqueCap = 1.0;       // closed-loop TC state: 0 to 1, of torque currently allowed
+    private boolean tcsActive;
     private double boostReserve = 1.0;      // 0 to 1
     private boolean boosting;
 
@@ -376,28 +374,31 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
         return factor;
     }
 
+
     private double tractionControlCap(double avgOmega, double repRadius, boolean running) {
-        if (!tractionControl) {
-            tcTorqueCap = 1.0; // disabled, full power, and clean reset
+        if (!tractionControl || !running || repRadius <= 0.0 || throttle <= 0.1f) {
+            tcsActive = false;
             return 1.0;
-        }
-        if (!running || repRadius <= 0.0) {
-            return tcTorqueCap; // cant measure so hold
         }
         double wheelSurface = Math.abs(avgOmega) * repRadius;
         double ground = Sable.HELPER.getVelocity(level, Vec3.atCenterOf(worldPosition)).length();
         double slip = ground > 0.5 ? (wheelSurface - ground) / ground
                 : (wheelSurface > 0.5 ? 1.0 : 0.0); // from a standstill any wheel motion is pure slip
 
-        double dt = 1.0 / 20.0;
-        double error = slip - TC_TARGET_SLIP;
-        if (error > TC_DEADBAND) {
-            tcTorqueCap -= TC_CUT_RATE * error * dt; // cuts harder the worse the slip
-        } else if (error < -TC_DEADBAND) {
-            tcTorqueCap += TC_RECOVER_RATE * dt;     // gripping again, ease power back in
+        double slipEngage = TC_IDEAL_SLIP * TC_ENGAGE;
+        double slipDisengage = TC_IDEAL_SLIP * TC_DISENGAGE;
+        if (slip > slipEngage) {
+            tcsActive = true;
+        } else if (slip < slipDisengage) {
+            tcsActive = false;
         }
-        tcTorqueCap = Mth.clamp(tcTorqueCap, TC_MIN_CAP, 1.0);
-        return tcTorqueCap;
+        if (!tcsActive) {
+            return 1.0;
+        }
+
+        double error = slip - slipDisengage;
+        double reducedThrottle = Mth.clamp(throttle - error * TC_GAIN, 0.0, throttle);
+        return throttle > 1.0e-4f ? reducedThrottle / throttle : 1.0;
     }
 
     public int getPowerMode() {
