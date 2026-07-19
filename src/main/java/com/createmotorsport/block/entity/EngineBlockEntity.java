@@ -105,15 +105,14 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
     private static final double BOOST_DRAIN = 1.0 / (20 * 8);    // ~8 s of full boost
     private static final double BOOST_RECHARGE = 1.0 / (20 * 20); // ~20 s to refill
 
-    // Traction control model replaced with Vdrift's ApplyTCS
-    private static final double TC_IDEAL_SLIP = 0.12;
-    private static final double TC_ENGAGE = 1.2;
-    private static final double TC_DISENGAGE = 0.8;
-    private static final double TC_GAIN = 2.0;
+    // Traction control model from Speed-dreams / TORCS this time, maybe itll work better
+    private static final double TCL_SLIP = 2.5;          // m/s of wheelspin allowed before cutting
+    private static final double TCL_RANGE = 10.0;        // m/s past the threshold that trims throttle to 0
+    private static final double TCL_SIDE_SLIP = 2.0;     // m/s of sideways slide before the anti-oversteer cut
+    private static final double TCL_SIDE_FACTOR = 0.8;   // throttle multiplier while sliding sideways
 
     private int powerMode = MAX_POWER_MODE; // 1 to 8;  torque caps at mode / MAX
     private boolean tractionControl;
-    private boolean tcsActive;
     private double boostReserve = 1.0;      // 0 to 1
     private boolean boosting;
 
@@ -377,28 +376,25 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
 
     private double tractionControlCap(double avgOmega, double repRadius, boolean running) {
         if (!tractionControl || !running || repRadius <= 0.0 || throttle <= 0.1f) {
-            tcsActive = false;
             return 1.0;
         }
+        Vec3 vel = Sable.HELPER.getVelocity(level, Vec3.atCenterOf(worldPosition));
         double wheelSurface = Math.abs(avgOmega) * repRadius;
-        double ground = Sable.HELPER.getVelocity(level, Vec3.atCenterOf(worldPosition)).length();
-        double slip = ground > 0.5 ? (wheelSurface - ground) / ground
-                : (wheelSurface > 0.5 ? 1.0 : 0.0); // from a standstill any wheel motion is pure slip
+        double ground = vel.length();
 
-        double slipEngage = TC_IDEAL_SLIP * TC_ENGAGE;
-        double slipDisengage = TC_IDEAL_SLIP * TC_DISENGAGE;
-        if (slip > slipEngage) {
-            tcsActive = true;
-        } else if (slip < slipDisengage) {
-            tcsActive = false;
-        }
-        if (!tcsActive) {
-            return 1.0;
+        double factor = 1.0;
+        double slip = wheelSurface - ground; // m/s of wheelspin
+        if (slip > TCL_SLIP) {
+            factor = Mth.clamp(1.0 - (slip - TCL_SLIP) / TCL_RANGE, 0.0, 1.0);
         }
 
-        double error = slip - slipDisengage;
-        double reducedThrottle = Mth.clamp(throttle - error * TC_GAIN, 0.0, throttle);
-        return throttle > 1.0e-4f ? reducedThrottle / throttle : 1.0;
+        // Lateral slide = velocity component across the car's forward axis (engine facing)
+        Direction facing = getFacing();
+        double sideSlip = Math.abs(vel.x * facing.getStepZ() - vel.z * facing.getStepX());
+        if (sideSlip > TCL_SIDE_SLIP) {
+            factor *= TCL_SIDE_FACTOR;
+        }
+        return factor;
     }
 
     public int getPowerMode() {
