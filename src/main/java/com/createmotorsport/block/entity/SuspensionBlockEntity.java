@@ -47,11 +47,18 @@ import net.minecraft.world.phys.shapes.CollisionContext;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Vector3d;
+import software.bernie.geckolib.animatable.GeoBlockEntity;
+import software.bernie.geckolib.animatable.instance.AnimatableInstanceCache;
+import software.bernie.geckolib.animation.AnimatableManager;
+import software.bernie.geckolib.animation.AnimationController;
+import software.bernie.geckolib.animation.PlayState;
+import software.bernie.geckolib.animation.RawAnimation;
+import software.bernie.geckolib.util.GeckoLibUtil;
 
 import java.util.Collection;
 import java.util.List;
 
-public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEntitySubLevelActor {
+public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEntitySubLevelActor, GeoBlockEntity {
     public static final double REST_LENGTH = 0.65;
     public static final double MAX_TRAVEL = 0.45;
     public static final double MAX_DROOP_RENDER = 0.15;
@@ -214,6 +221,13 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
     // defaults to rear axle, which means the user does need to change the other to 'front' for now, will fix later
     private boolean frontAxle;
 
+    // geckolib clips from blockbench
+    private static final RawAnimation AXLE_ROTATION = RawAnimation.begin().thenLoop("axle_rotation");
+    private static final RawAnimation AXLE_ROTATION_REVERSE = RawAnimation.begin().thenLoop("axle_rotation_reverse");
+    private static final RawAnimation LEFT_SUSPENSION = RawAnimation.begin().thenLoop("left_suspension");
+    private static final RawAnimation RIGHT_SUSPENSION = RawAnimation.begin().thenLoop("right_suspension");
+    private final AnimatableInstanceCache animationCache = GeckoLibUtil.createInstanceCache(this);
+
     public SuspensionBlockEntity(BlockPos pos, BlockState state) {
         super(CreateMotorsport.SUSPENSION_BLOCK_ENTITY.get(), pos, state);
         for (int slot = 0; slot < CONTROL_SLOT_COUNT; slot++) {
@@ -230,6 +244,46 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
 
     @Override
     public void addBehaviours(List<BlockEntityBehaviour> behaviours) {
+    }
+
+    // ===================================================
+    // GeckoLib (client)
+    // ========================
+
+    @Override
+    public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
+        // wheel spin
+        controllers.add(new AnimationController<>(this, "axle", 0, state -> {
+            float speed = getWheelAnimationSpeed();
+            if (Math.abs(speed) <= 0.001F) {
+                state.setControllerSpeed(0.0F);
+                return state.setAndContinue(AXLE_ROTATION);
+            }
+            state.setControllerSpeed(Math.abs(speed));
+            return state.setAndContinue(speed < 0.0F ? AXLE_ROTATION_REVERSE : AXLE_ROTATION);
+        }));
+        // wishbone bob on each side
+        controllers.add(new AnimationController<>(this, "left_suspension", 0, state ->
+                isSuspensionMoving(WheelSide.LEFT) ? state.setAndContinue(LEFT_SUSPENSION) : PlayState.STOP));
+        controllers.add(new AnimationController<>(this, "right_suspension", 0, state ->
+                isSuspensionMoving(WheelSide.RIGHT) ? state.setAndContinue(RIGHT_SUSPENSION) : PlayState.STOP));
+    }
+
+    @Override
+    public AnimatableInstanceCache getAnimatableInstanceCache() {
+        return animationCache;
+    }
+
+    // animation speed derived from average synced wheel angular velocity
+    private float getWheelAnimationSpeed() {
+        double avgOmega = 0.5 * (leftWheel.syncedOmega + rightWheel.syncedOmega);
+        return (float) (avgOmega / (2.0 * Math.PI));
+    }
+
+    // corner is 'moving' if the spring length is still changing frame by frame
+    private boolean isSuspensionMoving(WheelSide side) {
+        WheelState w = getWheel(side);
+        return hasTire(side) && Math.abs(w.clientSpringLength - w.lastClientSpringLength) > 0.001;
     }
 
     // =======================================

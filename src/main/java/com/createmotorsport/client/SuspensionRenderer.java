@@ -3,7 +3,6 @@ package com.createmotorsport.client;
 import com.createmotorsport.block.entity.SuspensionBlockEntity;
 import com.createmotorsport.block.entity.SuspensionBlockEntity.WheelSide;
 import com.mojang.blaze3d.vertex.PoseStack;
-import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.mojang.math.Axis;
 import dev.engine_room.flywheel.lib.model.baked.PartialModel;
 import dev.ryanhcode.offroad.content.components.TireLike;
@@ -13,7 +12,6 @@ import net.createmod.catnip.render.SuperByteBuffer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
-import net.minecraft.client.renderer.blockentity.BlockEntityRenderer;
 import net.minecraft.core.Direction;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.ItemDisplayContext;
@@ -21,26 +19,36 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Vector3f;
+import software.bernie.geckolib.renderer.GeoBlockRenderer;
 
-
-// Renders the tires when placed by player, same way aero does it
-public class SuspensionRenderer implements BlockEntityRenderer<SuspensionBlockEntity> {
+public class SuspensionRenderer extends GeoBlockRenderer<SuspensionBlockEntity> {
     private static final float SPIN_SIGN = -1.0F;
     private static final float STEER_SIGN = 1.0F;
 
     private static final float DROP_HEIGHT = 0.5F;
 
-    private static final Vector3f LEFT_HUB = new Vector3f(8.0F / 16F, 3.0F / 16F, -12.25F / 16F);
-    private static final Vector3f RIGHT_HUB = new Vector3f(8.0F / 16F, 3.0F / 16F, 29.0F / 16F);
+    private static final Vector3f LEFT_HUB = new Vector3f(8.0F / 16F, 1.0F / 16F, (8.0F + 25.0F) / 16F);
+    private static final Vector3f RIGHT_HUB = new Vector3f(8.0F / 16F, 1.0F / 16F, (8.0F - 25.0F) / 16F);
 
     public SuspensionRenderer() {
+        super(new SuspensionModel());
     }
 
     @Override
     public void render(SuspensionBlockEntity be, float partialTicks, PoseStack ms, MultiBufferSource buffer,
                        int light, int overlay) {
-        BlockState state = be.getBlockState();
+        super.render(be, partialTicks, ms, buffer, light, overlay);
+        renderTires(be, partialTicks, ms, buffer, light, overlay);
+    }
 
+    @Override
+    protected void rotateBlock(Direction facing, PoseStack poseStack) {
+        poseStack.mulPose(Axis.YP.rotationDegrees(blockstateYaw(facing)));
+    }
+
+    private void renderTires(SuspensionBlockEntity be, float partialTicks, PoseStack ms, MultiBufferSource buffer,
+                             int light, int overlay) {
+        BlockState state = be.getBlockState();
         ms.pushPose();
         ms.translate(0.5, 0.5, 0.5);
         ms.mulPose(Axis.YP.rotationDegrees(blockstateYaw(be.getFacing())));

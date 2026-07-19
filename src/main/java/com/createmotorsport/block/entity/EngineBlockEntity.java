@@ -246,8 +246,8 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
                     signalFor(ControlChannel.SHIFT_DOWN), wheelCount,
                     String.format("%.1f", totalTorque));
         }
-
-        playEngineSound(running);
+        // muting engine for now
+        // playEngineSound(running);
     }
 
     // trying to auto-align the car, so +1 is the suspension facing same way as engine, -1 if opposite
@@ -512,6 +512,7 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
     // Sound
     // =============
 
+    // muted for now until we work on this
     private void playEngineSound(boolean running) {
         if (!running) {
             soundCooldown = 0;

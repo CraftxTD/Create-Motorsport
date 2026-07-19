@@ -28,7 +28,7 @@ public class SteeringWheelRenderer implements BlockEntityRenderer<SteeringWheelB
     private static final Vector3f WHEEL_AXIS = new Vector3f(0.96593F, -0.25882F, 0F).normalize();
 
     // Tilt up to driver so you can read the screen
-    private static final float TILT_DEG = 13.0F;
+    private static final float TILT_DEG = 5.0F;
 
     // Screen face placement (pixels)
     private static final float FACE_X = 0.0F;
