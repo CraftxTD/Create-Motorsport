@@ -57,6 +57,7 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
     public static final double MAX_DROOP_RENDER = 0.15;
     private static final double MAX_STEER_RAD = Math.toRadians(32.0);
     private static final double GROUND_MARGIN = 0.15;
+    private static final double FORCE_RELAX = 0.4; // low-pass factor for tire longitudinal force per substep
     private static final int SYNC_INTERVAL_TICKS = 2;
 
     // Server-side regitries for engine lookup and batched force flushing
@@ -126,6 +127,7 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         double telemCompression;
         double telemBrakeTorque;
         double telemGripMult = 1.0;
+        double prevLongForce; // last longitudinal tire force, for the relaxation low-pass
     }
 
     // snapshot of a wheel's last physics step, for csv logging
@@ -633,7 +635,18 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         double effectiveMu = wheel.surfaceMu * gripMult;
         wheel.telemGripMult = gripMult;
 
-        double tireForce = TireModel.longitudinalForce(normalForce, effectiveMu, wheel.omega * radius, vLon);
+        // non driving or braked wheels take from offroad wheel mount, just track ground so it cant start creating slip force and maybe wont roll as much
+        boolean powered = Math.abs(driveTorquePerWheel) > 1.0e-3 || brakeTorque > 1.0e-3;
+        double tireForce;
+        if (powered) {
+            tireForce = TireModel.longitudinalForce(normalForce, effectiveMu, wheel.omega * radius, vLon);
+        } else {
+            wheel.omega = vLon / radius; // roll with the ground, no slip
+            tireForce = -TireModel.rollingResistance(normalForce, vLon);
+        }
+        // Speed-dreams runs FLOAT_RELAXATION2 on the tire force to relax longitudinal force towards its target, to damp oscillation
+        tireForce = wheel.prevLongForce + (tireForce - wheel.prevLongForce) * FORCE_RELAX;
+        wheel.prevLongForce = tireForce;
         double forwardImpulse = tireForce * dt;
 
         // cancel a fraction of the lateral velocity per substep same way Bullet does
@@ -645,8 +658,10 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         forwardImpulse *= ellipseScale;
         sideImpulse *= ellipseScale;
 
-        wheel.omega = TireModel.integrateSpin(wheel.omega, radius, wheelInertia, driveTorquePerWheel,
-                brakeTorque, forwardImpulse / dt, vLon, dt);
+        if (powered) {
+            wheel.omega = TireModel.integrateSpin(wheel.omega, radius, wheelInertia, driveTorquePerWheel,
+                    brakeTorque, forwardImpulse / dt, vLon, dt);
+        }
 
 
         // recording the resolved physics for csv logging

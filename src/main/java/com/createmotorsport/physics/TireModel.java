@@ -7,35 +7,36 @@ import net.minecraft.util.Mth;
 
 public final class TireModel {
 
-    // thanks Dr. Pacejka for magic tire numbers; stiffness/shape; peak ~1.0 with 15% slip, easing ot 0.9 if spinning
+    // thanks Dr. Pacejka for magic tire numbers; stiffness/shape/curvature
     private static final double PACEJKA_B = 10.0;
     private static final double PACEJKA_C = 1.9;
+    private static final double PACEJKA_E = 0.85;
 
-    // base multiplier of the rubber itself, which is multiplied by the blocks friction coef from Sable
-    public static final double TIRE_GRIP = 0.9;
+
+    // boost grip, F1 cars can have really high friction coefficients, apparently
+    public static final double TIRE_GRIP = 1.5;
 
     private TireModel() {
     }
 
     // normalize forze response to slip ratio, odd function, |f| <= 1
     public static double slipCurve(double slip) {
-        return Math.sin(PACEJKA_C * Math.atan(PACEJKA_B * slip));
+        double bx = PACEJKA_B * slip;
+        return Math.sin(PACEJKA_C * Math.atan(bx * (1.0 - PACEJKA_E) + PACEJKA_E * Math.atan(bx)));
     }
 
-    // how hard the tire loses grip when it is under- or over-loaded away from its design load
-    private static final double UNDER_LOAD_PENALTY = 0.7; // too light -> tire not pressed in, greasy
-    private static final double OVER_LOAD_PENALTY = 0.35; // too heavy -> load sensitivity, gentler
-    private static final double MIN_LOAD_MULT = 0.4;
 
+    // better tire design load modeling
+    private static final double LF_MAX = 1.15; // grip multiplier as load -> 0 (very light)
+    private static final double LF_MIN = 0.80; // grip multiplier as load -> large (very heavy)
+    private static final double LF_K = -0.6;   // how fast it falls with load
 
-    // "design-load" grip multiplier. 1 = carrying designed load. So tire offers better grip with more weight
     public static double loadSensitivity(double load, double designLoad) {
         if (designLoad <= 0.0) {
             return 1.0;
         }
         double x = load / designLoad;
-        double penalty = x < 1.0 ? UNDER_LOAD_PENALTY * (1.0 - x) : OVER_LOAD_PENALTY * (x - 1.0);
-        return Mth.clamp(1.0 - penalty, MIN_LOAD_MULT, 1.0);
+        return LF_MIN + (LF_MAX - LF_MIN) * Math.exp(LF_K * x);
     }
 
 
@@ -49,6 +50,14 @@ public final class TireModel {
     public static double longitudinalForce(double normalForce, double surfaceMu, double wheelSpeed, double groundSpeed) {
         double slipRatio = (wheelSpeed - groundSpeed) / Math.max(Math.abs(groundSpeed), 2.0);
         return normalForce * surfaceMu * TIRE_GRIP * slipCurve(slipRatio);
+    }
+
+    // stop moving when still, based on how offroad seems to do it
+    private static final double ROLL_RESIST_COEF = 0.015;
+    private static final double ROLL_RESIST_SMOOTH = 0.5;
+
+    public static double rollingResistance(double normalForce, double groundSpeed) {
+        return ROLL_RESIST_COEF * normalForce * Mth.clamp(groundSpeed / ROLL_RESIST_SMOOTH, -1.0, 1.0);
     }
 
     /** Clamps a pair of impulses from each side to the friction ellipse

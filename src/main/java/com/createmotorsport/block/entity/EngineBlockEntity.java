@@ -108,8 +108,9 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
     // Traction control model from Speed-dreams / TORCS this time, maybe itll work better
     private static final double TCL_SLIP = 2.5;          // m/s of wheelspin allowed before cutting
     private static final double TCL_RANGE = 10.0;        // m/s past the threshold that trims throttle to 0
-    private static final double TCL_SIDE_SLIP = 2.0;     // m/s of sideways slide before the anti-oversteer cut
-    private static final double TCL_SIDE_FACTOR = 0.8;   // throttle multiplier while sliding sideways
+    private static final double TCL_SIDE_SLIP = 4.0;     // m/s of sideways slide before the anti-oversteer cut
+    private static final double TCL_SIDE_RANGE = 8.0;    // m/s past that over which the cut ramps to the floor
+    private static final double TCL_SIDE_FLOOR = 0.5;    // most the lateral cut can trim throttle to
 
     private int powerMode = MAX_POWER_MODE; // 1 to 8;  torque caps at mode / MAX
     private boolean tractionControl;
@@ -217,7 +218,8 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
         }
 
         double avgOmega = wheelCount == 0 ? 0.0 : omegaSum / wheelCount;
-        double totalTorque = drivetrain.update(running, throttle, clutchHeld, shiftUpEdge, shiftDownEdge,
+        boolean semiAuto = Config.SEMI_AUTO_SHIFT.get();
+        double totalTorque = drivetrain.update(running, throttle, clutchHeld, semiAuto, shiftUpEdge, shiftDownEdge,
                 avgOmega, 1.0 / 20.0);
         totalTorque *= Config.DRIVETRAIN_TORQUE_SCALE.getAsDouble();
         totalTorque *= powerFactor(driving && auxOvertake, avgOmega, repRadius, running);
@@ -373,7 +375,7 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
         return factor;
     }
 
-
+    
     private double tractionControlCap(double avgOmega, double repRadius, boolean running) {
         if (!tractionControl || !running || repRadius <= 0.0 || throttle <= 0.1f) {
             return 1.0;
@@ -388,11 +390,11 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
             factor = Mth.clamp(1.0 - (slip - TCL_SLIP) / TCL_RANGE, 0.0, 1.0);
         }
 
-        // Lateral slide = velocity component across the car's forward axis (engine facing)
+        // lateral slide might be causing issues too, temporary fix is this clamping, but measure needs to be heading based, and the whole model needs looking at
         Direction facing = getFacing();
         double sideSlip = Math.abs(vel.x * facing.getStepZ() - vel.z * facing.getStepX());
         if (sideSlip > TCL_SIDE_SLIP) {
-            factor *= TCL_SIDE_FACTOR;
+            factor *= Mth.clamp(1.0 - (sideSlip - TCL_SIDE_SLIP) / TCL_SIDE_RANGE, TCL_SIDE_FLOOR, 1.0);
         }
         return factor;
     }

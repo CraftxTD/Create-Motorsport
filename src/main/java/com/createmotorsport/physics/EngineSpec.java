@@ -19,8 +19,7 @@ public record EngineSpec(
         double drivelineEfficiency
 ) {
 
-    // Example of an engine I found that an F1 car might have, this could be a higher tier of several engines
-    // 1.6L turbo V6 hybrid power unit, detuned for gameplay so maybe it will require a lower gear to move
+    // still working on tuning this
     public static final EngineSpec RACING_V6_HYBRID = new EngineSpec(
             3000, 15000, 420,
             new double[]{3.20, 2.49, 2.00, 1.67, 1.44, 1.26, 1.12, 1.00},

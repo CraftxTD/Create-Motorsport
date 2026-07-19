@@ -17,5 +17,9 @@ public class Config {
             .comment("0 = open differential, 200+ is like a near-locked spool")
             .defineInRange("differentialAntiSlipTorque", 200.0, 0.0, 100000.0);
 
+    public static final ModConfigSpec.BooleanValue SEMI_AUTO_SHIFT = BUILDER
+            .comment("false = full manual: you must hold the clutch channel to change gear")
+            .define("semiAutoShift", true);
+
     static final ModConfigSpec SPEC = BUILDER.build();
 }
