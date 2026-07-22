@@ -20,7 +20,6 @@ public final class DrivetrainSim {
     private static final double LAUNCH_FLARE_FRAC = 0.42;
 
     private final EngineSpec spec;
-
     private final int maxGear;
 
     private double rpm;
@@ -113,9 +112,14 @@ public final class DrivetrainSim {
         this.rpm = Mth.lerp(1.0 - Math.exp(-8.0 * dt), this.rpm, targetRpm);
 
         boolean slipping = lock < 1.0 || transfer < 1.0;
-        double engineTorque = throttle < 0.02
-                ? -this.spec.engineBrakeTorque(this.rpm)
-                : throttle * this.spec.torqueAt(this.rpm);
+        //Might help drifting
+        double engineTorque;
+        if (throttle < 0.02) {
+            double brakeEngage = Mth.clamp(rpmFromWheels / idle, 0.0, 1.0);
+            engineTorque = -this.spec.engineBrakeTorque(this.rpm) * brakeEngage;
+        } else {
+            engineTorque = throttle * this.spec.torqueAt(this.rpm);
+        }
 
         // Transmitted torque scales with engagement
         double wheelTorque = engineTorque * transfer * ratio * this.spec.drivelineEfficiency();

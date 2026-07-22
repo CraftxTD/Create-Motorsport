@@ -14,6 +14,7 @@ import dev.ryanhcode.sable.Sable;
 import dev.ryanhcode.sable.api.block.BlockEntitySubLevelActor;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.createmod.catnip.data.Couple;
+import org.joml.Vector3d;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.HolderLookup;
@@ -389,13 +390,27 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
             factor = Mth.clamp(1.0 - (slip - TCL_SLIP) / TCL_RANGE, 0.0, 1.0);
         }
 
-        // lateral slide might be causing issues too, temporary fix is this clamping, but measure needs to be heading based, and the whole model needs looking at
-        Direction facing = getFacing();
-        double sideSlip = Math.abs(vel.x * facing.getStepZ() - vel.z * facing.getStepX());
+        Vec3 fwd = headingForward();
+        double sideSlip = Math.abs(vel.x * fwd.z - vel.z * fwd.x);
         if (sideSlip > TCL_SIDE_SLIP) {
             factor *= Mth.clamp(1.0 - (sideSlip - TCL_SIDE_SLIP) / TCL_SIDE_RANGE, TCL_SIDE_FLOOR, 1.0);
         }
         return factor;
+    }
+
+    private Vec3 headingForward() {
+        Direction facing = getFacing();
+        SubLevel sub = level == null ? null : Sable.HELPER.getContaining(level, worldPosition);
+        if (sub != null) {
+            Vector3d world = new Vector3d(facing.getStepX(), 0.0, facing.getStepZ());
+            sub.logicalPose().transformNormal(world);
+            double lenSq = world.x * world.x + world.z * world.z;
+            if (lenSq > 1.0e-6) {
+                double inv = 1.0 / Math.sqrt(lenSq);
+                return new Vec3(world.x * inv, 0.0, world.z * inv);
+            }
+        }
+        return new Vec3(facing.getStepX(), 0.0, facing.getStepZ());
     }
 
     public int getPowerMode() {

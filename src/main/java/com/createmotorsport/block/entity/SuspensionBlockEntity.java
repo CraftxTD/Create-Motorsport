@@ -280,10 +280,11 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         return (float) (avgOmega / (2.0 * Math.PI));
     }
 
-    // corner is 'moving' if the spring length is still changing frame by frame
+    private static final double SUSPENSION_BUMP_RATE = 0.03;
+
     private boolean isSuspensionMoving(WheelSide side) {
         WheelState w = getWheel(side);
-        return hasTire(side) && Math.abs(w.clientSpringLength - w.lastClientSpringLength) > 0.001;
+        return hasTire(side) && Math.abs(w.clientSpringLength - w.lastClientSpringLength) > SUSPENSION_BUMP_RATE;
     }
 
     // =======================================
