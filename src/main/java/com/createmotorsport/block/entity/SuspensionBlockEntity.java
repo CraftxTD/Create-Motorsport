@@ -752,7 +752,7 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
             double wheelSpeed = wheel.omega * radius;
             double denom = Math.max(Math.abs(vLon), 2.0);
             double slipLon = (wheelSpeed - vLon) / denom;
-            double slipLat = Math.sin(Math.atan2(vLat, Math.max(Math.abs(vLon), 0.05)));
+            double slipLat = vLat / Math.max(Math.abs(vLon), 0.05);
             double s = Math.sqrt(slipLon * slipLon + slipLat * slipLat);
 
             double forwardForce = 0.0;
