@@ -1,42 +1,30 @@
 package com.createmotorsport.physics;
 
+import com.createmotorsport.Config;
 import net.minecraft.util.Mth;
 
 // slip-based tire friction
 // based on Rapier's DynamicRayCastVehicleController (which came from Bullet's btRaycastVehicle)
+// added onto by referring to speed dreams a lot and vdrift
 
 public final class TireModel {
-
-    // thanks Dr. Pacejka for magic tire numbers; stiffness/shape/curvature
-    private static final double PACEJKA_B = 10.0;
-    private static final double PACEJKA_C = 1.9;
-    private static final double PACEJKA_E = 0.85;
-
-
-    // boost grip, F1 cars can have really high friction coefficients, apparently
-    public static final double TIRE_GRIP = 1.5;
 
     private TireModel() {
     }
 
     // normalize forze response to slip ratio, odd function, |f| <= 1
-    public static double slipCurve(double slip) {
-        double bx = PACEJKA_B * slip;
-        return Math.sin(PACEJKA_C * Math.atan(bx * (1.0 - PACEJKA_E) + PACEJKA_E * Math.atan(bx)));
+    public static double slipCurve(double slip, double b, double c, double e) {
+        double bx = b * slip;
+        return Math.sin(c * Math.atan(bx * (1.0 - e) + e * Math.atan(bx)));
     }
 
-
-    // better tire design load modeling
-    private static final double LF_MAX = 1.15; // grip multiplier as load -> 0 (very light)
-    private static final double LF_MIN = 0.80; // grip multiplier as load -> large (very heavy)
-    private static final double LF_K = -0.6;   // how fast it falls with load
-
-    public static double loadSensitivity(double load, double designLoad) {
+    // better tire design load modeling; the light/heavy/falloff factors come from the tier
+    public static double loadSensitivity(double load, double designLoad, TireSpec spec) {
         if (designLoad <= 0.0) {
             return 1.0;
         }
         double x = load / designLoad;
-        return LF_MIN + (LF_MAX - LF_MIN) * Math.exp(LF_K * x);
+        return spec.loadFactorHeavy() + (spec.loadFactorLight() - spec.loadFactorHeavy()) * Math.exp(spec.loadFalloff() * x);
     }
 
 
@@ -46,18 +34,19 @@ public final class TireModel {
      * @param surfaceMu -> friction coefficient of the block under the tire, from Sable
      * @param wheelSpeed -> omega * radius, contact patch speed (m/s)
      * @param groundSpeed -> longitudinal velocity of the hub over the ground (m/s)
+     * @param spec -> the tire tier (curve shape + base grip)
      */
-    public static double longitudinalForce(double normalForce, double surfaceMu, double wheelSpeed, double groundSpeed) {
+    public static double longitudinalForce(double normalForce, double surfaceMu, double wheelSpeed, double groundSpeed, TireSpec spec) {
         double slipRatio = (wheelSpeed - groundSpeed) / Math.max(Math.abs(groundSpeed), 2.0);
-        return normalForce * surfaceMu * TIRE_GRIP * slipCurve(slipRatio);
+        return normalForce * surfaceMu * spec.grip() * slipCurve(slipRatio, spec.pacejkaB(), spec.pacejkaC(), spec.pacejkaE());
     }
 
     // stop moving when still, based on how offroad seems to do it
-    private static final double ROLL_RESIST_COEF = 0.015;
     private static final double ROLL_RESIST_SMOOTH = 0.5;
 
     public static double rollingResistance(double normalForce, double groundSpeed) {
-        return ROLL_RESIST_COEF * normalForce * Mth.clamp(groundSpeed / ROLL_RESIST_SMOOTH, -1.0, 1.0);
+        return Config.ROLLING_RESISTANCE_COEF.getAsDouble() * normalForce
+                * Mth.clamp(groundSpeed / ROLL_RESIST_SMOOTH, -1.0, 1.0);
     }
 
     /** Clamps a pair of impulses from each side to the friction ellipse
@@ -66,7 +55,7 @@ public final class TireModel {
     // return is scaled factoer in (0,1] to apply to both impulses; 1 is inside the ellipse
     */
     public static double frictionEllipseScale(double forwardImpulse, double sideImpulse, double maxImpulse) {
-        double x = forwardImpulse * 0.5;
+        double x = forwardImpulse * Config.FRICTION_ELLIPSE_LONG_WEIGHT.getAsDouble();
         double y = sideImpulse;
         double lenSq = x * x + y * y;
         double maxSq = maxImpulse * maxImpulse;

@@ -1,5 +1,6 @@
 package com.createmotorsport.physics;
 
+import com.createmotorsport.Config;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.util.Mth;
 
@@ -20,6 +21,7 @@ public final class DrivetrainSim {
     private static final double LAUNCH_FLARE_FRAC = 0.42;
 
     private final EngineSpec spec;
+
     private final int maxGear;
 
     private double rpm;
@@ -112,7 +114,8 @@ public final class DrivetrainSim {
         this.rpm = Mth.lerp(1.0 - Math.exp(-8.0 * dt), this.rpm, targetRpm);
 
         boolean slipping = lock < 1.0 || transfer < 1.0;
-        //Might help drifting
+
+        // help stand-still drifting by making engine braking only work when wheels are turning near the idle-in-gear speed
         double engineTorque;
         if (throttle < 0.02) {
             double brakeEngage = Mth.clamp(rpmFromWheels / idle, 0.0, 1.0);
@@ -120,6 +123,8 @@ public final class DrivetrainSim {
         } else {
             engineTorque = throttle * this.spec.torqueAt(this.rpm);
         }
+        // Scale the whole curve so its peak equals the configured crank torque (Nm), with curve shape unchanged
+        engineTorque *= Config.ENGINE_PEAK_TORQUE.getAsDouble() / this.spec.peakTorque();
 
         // Transmitted torque scales with engagement
         double wheelTorque = engineTorque * transfer * ratio * this.spec.drivelineEfficiency();

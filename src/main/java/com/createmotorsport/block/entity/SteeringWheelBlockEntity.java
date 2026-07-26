@@ -447,7 +447,8 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
         StringBuilder sb = new StringBuilder(
                 "t_s,tick,speed_ms,speed_kmh,mass_kg,gear,rpm,throttle,clutch_locked,"
                         + "engine_torque_Nm,gear_ratio,wheel_torque_Nm,wheel_torque_applied,avg_wheel_omega,driven_wheels,"
-                        + "power_mode,tc_on,boost_reserve,torque_factor");
+                        + "power_mode,tc_on,boost_reserve,torque_factor,pos_x,pos_y,pos_z,vel_x,vel_y,vel_z,"
+                        + "bodypos_x,bodypos_y,bodypos_z,quat_x,quat_y,quat_z,quat_w");
         for (int a = 0; a < car.suspensions().size(); a++) {
             for (String sideTag : new String[]{"L", "R"}) {
                 for (String col : WHEEL_COLS) {
@@ -465,6 +466,13 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
         double tS = (level.getGameTime() - logStartGameTime) / 20.0;
         Vec3 velocity = Sable.HELPER.getVelocity(level, Vec3.atCenterOf(worldPosition));
         double speed = velocity.length();
+        Vec3 worldPos = car.subLevel() != null
+                ? car.subLevel().logicalPose().transformPosition(Vec3.atCenterOf(worldPosition))
+                : Vec3.atCenterOf(worldPosition);
+        org.joml.Vector3dc bodyPos = car.subLevel() != null
+                ? car.subLevel().logicalPose().position() : new org.joml.Vector3d();
+        org.joml.Quaterniondc quat = car.subLevel() != null
+                ? car.subLevel().logicalPose().orientation() : new org.joml.Quaterniond();
         double mass = car.subLevel() instanceof ServerSubLevel ssl && ssl.getMassTracker() != null
                 ? ssl.getMassTracker().getMass() : -1.0;
 
@@ -484,10 +492,12 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
         double boostReserve = engine != null ? engine.getBoostReserve() : 0.0;
         double torqueFactor = engine != null ? engine.getPowerFactor() : 0.0;
 
-        sb.append(String.format(l, "%.2f,%d,%.3f,%.2f,%.1f,%s,%d,%.3f,%d,%.2f,%.3f,%.2f,%.2f,%.3f,%d,%d,%d,%.3f,%.3f",
+        sb.append(String.format(l, "%.2f,%d,%.3f,%.2f,%.1f,%s,%d,%.3f,%d,%.2f,%.3f,%.2f,%.2f,%.3f,%d,%d,%d,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.4f,%.4f,%.4f,%.6f,%.6f,%.6f,%.6f",
                 tS, level.getGameTime(), speed, speed * 3.6, mass, gear, rpm, throttle,
                 clutchLocked ? 1 : 0, engineTorque, gearRatio, wheelTorque, wheelTorqueApplied,
-                avgOmega, drivenWheels, powerMode, tcOn ? 1 : 0, boostReserve, torqueFactor));
+                avgOmega, drivenWheels, powerMode, tcOn ? 1 : 0, boostReserve, torqueFactor,
+                worldPos.x, worldPos.y, worldPos.z, velocity.x, velocity.y, velocity.z,
+                bodyPos.x(), bodyPos.y(), bodyPos.z(), quat.x(), quat.y(), quat.z(), quat.w()));
 
         for (SuspensionBlockEntity s : car.suspensions()) {
             double steerDeg = Math.toDegrees(s.getSteerAngleRad());

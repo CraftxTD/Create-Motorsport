@@ -1,5 +1,6 @@
 package com.createmotorsport.client;
 
+import com.createmotorsport.Config;
 import com.createmotorsport.block.entity.SteeringWheelBlockEntity;
 import com.createmotorsport.block.entity.SteeringWheelBlockEntity.SteeringControl;
 import com.createmotorsport.network.SetDrivingPacket;
@@ -116,9 +117,14 @@ public final class SteeringInputHandler {
             }
         }
 
-        float throttle = strength(SteeringControl.THROTTLE);
-        float brake = strength(SteeringControl.BRAKE);
-        float steer = strength(SteeringControl.STEER_LEFT) - strength(SteeringControl.STEER_RIGHT);
+        // Another controller "assist": input gamma / trigger modulation; softens small analog movements so its easier
+        // to feather the throttle or steer precisely. Doesnt help with full power key press or buttons yet
+        float pedalGamma = (float) Config.PEDAL_INPUT_GAMMA.getAsDouble();
+        float steerGamma = (float) Config.STEER_INPUT_GAMMA.getAsDouble();
+        float throttle = (float) Math.pow(strength(SteeringControl.THROTTLE), pedalGamma);
+        float brake = (float) Math.pow(strength(SteeringControl.BRAKE), pedalGamma);
+        float steerRaw = strength(SteeringControl.STEER_LEFT) - strength(SteeringControl.STEER_RIGHT);
+        float steer = (float) (Math.signum(steerRaw) * Math.pow(Math.abs(steerRaw), steerGamma));
 
         int throttlePct = Math.round(Math.min(1.0F, throttle) * 100.0F);
         int brakePct = Math.round(Math.min(1.0F, brake) * 100.0F);

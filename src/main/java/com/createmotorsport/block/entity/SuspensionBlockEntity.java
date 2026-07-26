@@ -4,6 +4,7 @@ import com.createmotorsport.Config;
 import com.createmotorsport.CreateMotorsport;
 import com.createmotorsport.block.SuspensionBlock;
 import com.createmotorsport.physics.TireModel;
+import com.createmotorsport.physics.TireSpec;
 import com.simibubi.create.Create;
 import com.simibubi.create.content.redstone.link.IRedstoneLinkable;
 import com.simibubi.create.content.redstone.link.RedstoneLinkNetworkHandler;
@@ -19,6 +20,7 @@ import dev.ryanhcode.sable.api.math.OrientedBoundingBox3d;
 import dev.ryanhcode.sable.api.physics.force.ForceTotal;
 import dev.ryanhcode.sable.api.physics.handle.RigidBodyHandle;
 import dev.ryanhcode.sable.api.physics.mass.MassData;
+import dev.ryanhcode.sable.physics.config.dimension_physics.DimensionPhysicsData;
 import dev.ryanhcode.sable.companion.math.JOMLConversion;
 import dev.ryanhcode.sable.companion.math.Pose3d;
 import dev.ryanhcode.sable.companion.math.Pose3dc;
@@ -64,7 +66,6 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
     public static final double MAX_DROOP_RENDER = 0.15;
     private static final double MAX_STEER_RAD = Math.toRadians(32.0);
     private static final double GROUND_MARGIN = 0.15;
-    private static final double FORCE_RELAX = 0.4; // low-pass factor for tire longitudinal force per substep
     private static final int SYNC_INTERVAL_TICKS = 2;
 
     // Server-side regitries for engine lookup and batched force flushing
@@ -440,6 +441,7 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
 
     // applies queued force once per physics substep from the Sable pre-tick event
     public static void flushBatchedForces(ServerLevel level, double timeStep) {
+        ObjectOpenHashSet<ServerSubLevel> dragged = new ObjectOpenHashSet<>();
         for (SuspensionBlockEntity be : QUEUED) {
             if (be.isRemoved()) {
                 continue;
@@ -450,10 +452,38 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
             }
             RigidBodyHandle handle = RigidBodyHandle.of(serverSubLevel);
             if (handle != null) {
+                if (dragged.add(serverSubLevel)) {
+                    applyDragCompensation(level, serverSubLevel, be.forceTotal, timeStep);
+                }
                 handle.applyForcesAndReset(be.forceTotal);
             }
         }
         QUEUED.clear();
+    }
+
+
+    // fake force to counteract sables velocity-proportional linear damping (universal_drag)
+    // Due to scaling of forces in our units, this standard force is about 7x too strong,
+    // so this is still a cheap fix just to speed up the cars for now
+    private static void applyDragCompensation(ServerLevel level, ServerSubLevel subLevel,
+                                              ForceTotal forceTotal, double dt) {
+        double keep = Config.SABLE_DRAG_SCALE.getAsDouble();
+        if (keep >= 1.0) {
+            return; // full Sable drag, nothing to cancel
+        }
+        MassData massData = subLevel.getMassTracker();
+        if (massData == null || massData.isInvalid()) {
+            return;
+        }
+        double drag = DimensionPhysicsData.getUniversalDrag(level);
+        if (drag <= 0.0) {
+            return;
+        }
+        double mass = massData.getMass();
+        Vector3d localVel = subLevel.logicalPose().orientation()
+                .transformInverse(new Vector3d(subLevel.latestLinearVelocity));
+        Vector3d impulse = localVel.mul(mass * drag * (1.0 - keep) * dt);
+        forceTotal.applyLinearImpulse(impulse);
     }
 
     // ==============================================
@@ -495,7 +525,7 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         brake01 = newBrake;
 
         lastChasingSteer = chasingSteer;
-        chasingSteer = Mth.lerp(0.4, chasingSteer, steerSignal / 15.0 * MAX_STEER_RAD);
+        chasingSteer = Mth.lerp(0.4, chasingSteer, steerSignal / 15.0 * MAX_STEER_RAD * speedSteerLock());
 
 
         // torque stops when engine stops ticking
@@ -526,9 +556,19 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         return false;
     }
 
+    // speed sensitive steering lock; one of the controller assists; 1/(1 + k*v^2)
+    private double speedSteerLock() {
+        double k = Config.STEER_SPEED_SENSITIVITY.getAsDouble();
+        if (k <= 0.0 || level == null) {
+            return 1.0;
+        }
+        double v = Sable.HELPER.getVelocity(level, Vec3.atCenterOf(worldPosition)).length();
+        return 1.0 / (1.0 + k * v * v);
+    }
+
     private void clientTick() {
         lastChasingSteer = chasingSteer;
-        chasingSteer = Mth.lerp(0.4, chasingSteer, steerSignal / 15.0 * MAX_STEER_RAD);
+        chasingSteer = Mth.lerp(0.4, chasingSteer, steerSignal / 15.0 * MAX_STEER_RAD * speedSteerLock());
         for (WheelSide side : WheelSide.values()) {
             WheelState w = getWheel(side);
             w.lastAngle = w.angle;
@@ -673,7 +713,7 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
             hitNormal.normalize();
         }
         springForce *= Mth.clamp(1.0 / Math.max(0.5, hitNormal.y), 1.0, 2.0);
-        springForce = Math.min(springForce, 6.0 * effectiveMass * 9.81);
+        springForce = Math.min(springForce, Config.MAX_CORNERING_G.getAsDouble() * effectiveMass * 9.81);
 
         Vector3d springImpulse = new Vector3d(hitNormal).mul(springForce * dt);
         forceTotal.applyImpulseAtPoint(massData, hardpointJoml, springImpulse);
@@ -685,37 +725,94 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         double vLon = localVelocity.dot(forward);
         double vLat = localVelocity.dot(axle);
 
+
+        // per-axle tire tier so front grips better than rear, should help the turning be more natural
+        TireSpec tireSpec = isFrontAxle() ? TireSpec.RACING_SLICK_FRONT : TireSpec.RACING_SLICK_REAR;
+
         float designLoad = getTire(side).getOrDefault(CreateMotorsport.TIRE_DESIGN_LOAD, 0.0f);
-        double gripMult = TireModel.loadSensitivity(normalForce, designLoad);
+        double gripMult = TireModel.loadSensitivity(normalForce, designLoad, tireSpec);
         double effectiveMu = wheel.surfaceMu * gripMult;
         wheel.telemGripMult = gripMult;
 
         // non driving or braked wheels take from offroad wheel mount, just track ground so it cant start creating slip force and maybe wont roll as much
         boolean powered = Math.abs(driveTorquePerWheel) > 1.0e-3 || brakeTorque > 1.0e-3;
-        double tireForce;
-        if (powered) {
-            tireForce = TireModel.longitudinalForce(normalForce, effectiveMu, wheel.omega * radius, vLon);
+        double forwardImpulse;
+        double sideImpulse;
+
+        if (Config.SIM_TIRE_MODEL.get()) {
+
+            // ------ TOGGLEABLE "SIM" mode for tires --------------------------------
+            // If the driving mode is set to "Racing Sim" instead of "Arcade", then this is the section that takes
+            // one combined slip force split between longitudinal and lateral, so any grip spent accelerating or braking is taken away from cornering
+            // this lets the car break away and spin
+
+            if (!powered) {
+                wheel.omega = vLon / radius;
+            }
+            double wheelSpeed = wheel.omega * radius;
+            double denom = Math.max(Math.abs(vLon), 2.0);
+            double slipLon = (wheelSpeed - vLon) / denom;
+            double slipLat = Math.sin(Math.atan2(vLat, Math.max(Math.abs(vLon), 0.05)));
+            double s = Math.sqrt(slipLon * slipLon + slipLat * slipLat);
+
+            double forwardForce = 0.0;
+            double lateralForce = 0.0;
+            if (s > 1.0e-5) {
+                double fMag = normalForce * effectiveMu * tireSpec.grip()
+                        * TireModel.slipCurve(Math.min(s, Config.SIM_SLIP_LIMIT.getAsDouble()),
+                                tireSpec.pacejkaB(), tireSpec.pacejkaC(), tireSpec.pacejkaE());
+                forwardForce = fMag * slipLon / s;
+                lateralForce = -fMag * slipLat / s;
+            }
+            if (!powered) {
+                forwardForce = -TireModel.rollingResistance(normalForce, vLon);
+            }
+            forwardForce = wheel.prevLongForce + (forwardForce - wheel.prevLongForce) * Config.TIRE_FORCE_RELAXATION.getAsDouble();
+            wheel.prevLongForce = forwardForce;
+
+
+            // low speed blending to make it stabilize and not jitter
+            double speed = Math.sqrt(vLon * vLon + vLat * vLat);
+            double slipBlend = Mth.clamp(speed / Config.SIM_LOWSPEED_BLEND_MS.getAsDouble(), 0.0, 1.0);
+            double invSideMass = massData.getInverseNormalMass(hardpointJoml, axle);
+            double cancelForce = invSideMass > 1.0e-9 ? (-vLat / invSideMass * Config.LATERAL_GRIP_FRACTION.getAsDouble()) / dt : 0.0;
+            lateralForce = Mth.lerp(slipBlend, cancelForce, lateralForce);
+
+            forwardImpulse = forwardForce * dt;
+            sideImpulse = lateralForce * dt;
+
+            if (powered) {
+                wheel.omega = TireModel.integrateSpin(wheel.omega, radius, wheelInertia, driveTorquePerWheel,
+                        brakeTorque, forwardForce, vLon, dt);
+            }
         } else {
-            wheel.omega = vLon / radius; // roll with the ground, no slip
-            tireForce = -TireModel.rollingResistance(normalForce, vLon);
-        }
-        // Speed-dreams runs FLOAT_RELAXATION2 on the tire force to relax longitudinal force towards its target, to damp oscillation
-        tireForce = wheel.prevLongForce + (tireForce - wheel.prevLongForce) * FORCE_RELAX;
-        wheel.prevLongForce = tireForce;
-        double forwardImpulse = tireForce * dt;
 
-        // cancel a fraction of the lateral velocity per substep same way Bullet does
-        double invSideMass = massData.getInverseNormalMass(hardpointJoml, axle);
-        double sideImpulse = invSideMass > 1.0e-9 ? -vLat * (1.0 / invSideMass) * 0.5 : 0.0;
+            // ------ TOGGLEABLE "ARCADE" mode for tires --------------------------------
+            double tireForce;
+            if (powered) {
+                tireForce = TireModel.longitudinalForce(normalForce, effectiveMu, wheel.omega * radius, vLon, tireSpec);
+            } else {
+                wheel.omega = vLon / radius; // roll with the ground, no slip
+                tireForce = -TireModel.rollingResistance(normalForce, vLon);
+            }
+            // Speed-dreams runs FLOAT_RELAXATION2 on the tire force to relax longitudinal force towards its target, to damp oscillation
+            tireForce = wheel.prevLongForce + (tireForce - wheel.prevLongForce) * Config.TIRE_FORCE_RELAXATION.getAsDouble();
+            wheel.prevLongForce = tireForce;
+            forwardImpulse = tireForce * dt;
 
-        double maxImpulse = normalForce * effectiveMu * TireModel.TIRE_GRIP * dt;
-        double ellipseScale = TireModel.frictionEllipseScale(forwardImpulse, sideImpulse, maxImpulse);
-        forwardImpulse *= ellipseScale;
-        sideImpulse *= ellipseScale;
+            // cancel a fraction of the lateral velocity per substep same way Bullet does
+            double invSideMass = massData.getInverseNormalMass(hardpointJoml, axle);
+            sideImpulse = invSideMass > 1.0e-9 ? -vLat * (1.0 / invSideMass) * Config.LATERAL_GRIP_FRACTION.getAsDouble() : 0.0;
 
-        if (powered) {
-            wheel.omega = TireModel.integrateSpin(wheel.omega, radius, wheelInertia, driveTorquePerWheel,
-                    brakeTorque, forwardImpulse / dt, vLon, dt);
+            double maxImpulse = normalForce * effectiveMu * tireSpec.grip() * dt;
+            double ellipseScale = TireModel.frictionEllipseScale(forwardImpulse, sideImpulse, maxImpulse);
+            forwardImpulse *= ellipseScale;
+            sideImpulse *= ellipseScale;
+
+            if (powered) {
+                wheel.omega = TireModel.integrateSpin(wheel.omega, radius, wheelInertia, driveTorquePerWheel,
+                        brakeTorque, forwardImpulse / dt, vLon, dt);
+            }
         }
 
 
@@ -739,7 +836,7 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         Vector3d sidePoint = new Vector3d(contactPoint);
         if (massData.getCenterOfMass() != null) {
             double heightAboveCom = contactPoint.y - massData.getCenterOfMass().y();
-            double rollInfluence = 0.1;
+            double rollInfluence = Config.ROLL_INFLUENCE.getAsDouble();
             sidePoint.y -= heightAboveCom * (1.0 - rollInfluence);
         }
         forceTotal.applyImpulseAtPoint(massData, sidePoint, new Vector3d(axle).mul(sideImpulse));
