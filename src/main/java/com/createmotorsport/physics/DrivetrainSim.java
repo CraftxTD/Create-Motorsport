@@ -22,8 +22,6 @@ public final class DrivetrainSim {
 
     private final EngineSpec spec;
 
-    private final int maxGear;
-
     private double rpm;
     private int gear = GEAR_NEUTRAL;
     private double clutchEngage = 1.0; // 0 = disengaged, 1 = fully engaged (Speed dreams' transferValue)
@@ -37,8 +35,11 @@ public final class DrivetrainSim {
 
     public DrivetrainSim(EngineSpec spec) {
         this.spec = spec;
-        this.maxGear = GEAR_FIRST + spec.topGear();
         this.rpm = spec.idleRpm();
+    }
+
+    private int maxGear() {
+        return GEAR_FIRST + Config.gearRatios().length - 1;
     }
 
 
@@ -66,7 +67,7 @@ public final class DrivetrainSim {
         boolean canShift = semiAuto || clutchHeld;
         if (canShift) {
             if (shiftUpEdge) {
-                this.gear = Math.min(this.maxGear, this.gear + 1);
+                this.gear = Math.min(maxGear(), this.gear + 1);
                 if (semiAuto) this.shiftReleaseTimer = SHIFT_RELEASE_TIME;
             } else if (shiftDownEdge) {
                 this.gear = Math.max(GEAR_REVERSE, this.gear - 1);
@@ -156,14 +157,18 @@ public final class DrivetrainSim {
     }
 
     // Signed overall ratio from crank -> wheel for gear index; 0 for neutral, negative for reverse
+    // Comes from the config now
     private double overallRatio(int gearIndex) {
+        double finalDrive = Config.FINAL_DRIVE.getAsDouble();
         if (gearIndex == GEAR_REVERSE) {
-            return -this.spec.overallReverseRatio();
+            return -Config.REVERSE_RATIO.getAsDouble() * finalDrive;
         }
         if (gearIndex == GEAR_NEUTRAL) {
             return 0.0;
         }
-        return this.spec.overallRatio(gearIndex - GEAR_FIRST);
+        double[] ratios = Config.gearRatios();
+        int i = Mth.clamp(gearIndex - GEAR_FIRST, 0, ratios.length - 1);
+        return ratios[i] * finalDrive;
     }
 
     public double getRpm() {
@@ -202,6 +207,6 @@ public final class DrivetrainSim {
 
     public void load(CompoundTag tag) {
         this.rpm = tag.getDouble("Rpm");
-        this.gear = Mth.clamp(tag.getInt("Gear"), GEAR_REVERSE, this.maxGear);
+        this.gear = Mth.clamp(tag.getInt("Gear"), GEAR_REVERSE, maxGear());
     }
 }

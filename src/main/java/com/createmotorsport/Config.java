@@ -2,8 +2,14 @@ package com.createmotorsport;
 
 import net.neoforged.neoforge.common.ModConfigSpec;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public class Config {
     private static final ModConfigSpec.Builder BUILDER = new ModConfigSpec.Builder();
+
+    // Fallback forward gear ratios if the config string can't be parsed
+    private static final double[] DEFAULT_GEAR_RATIOS = {3.20, 2.49, 2.00, 1.67, 1.44, 1.26, 1.00};
 
     public static final ModConfigSpec.BooleanValue ENABLE_DEBUG_LOGGING = BUILDER
             .comment("Set to 'true' to see additional debugging logging")
@@ -21,6 +27,23 @@ public class Config {
                     "that at some point you are also limited by grip.")
             .defineInRange("enginePeakTorque", 320.0, 50.0, 2000.0);
 
+    public static final ModConfigSpec.ConfigValue<String> GEAR_RATIOS = BUILDER
+            .comment("Forward gear ratios, highest (1st gear) to lowest (top gear), comma-separated.",
+                    "Higher ratio = more torque but lower speed per gear",
+                    "Multiplied by finalDrive to get the final crank to wheel ratio.",
+                    "Default \"3.2, 2.49, 2.0, 1.67, 1.44, 1.26, 1.0\".")
+            .define("gearRatios", "3.2, 2.49, 2.0, 1.67, 1.44, 1.26, 1.0");
+
+    public static final ModConfigSpec.DoubleValue FINAL_DRIVE = BUILDER
+            .comment("Final-drive ratio, multiplied onto every gear (and reverse).",
+                    "Raise it to shorten all the gearing at once (more acceleration, lower top speed);",
+                    "Default 14.0")
+            .defineInRange("finalDrive", 14.0, 0.1, 60.0);
+
+    public static final ModConfigSpec.DoubleValue REVERSE_RATIO = BUILDER
+            .comment("Reverse gear ratio, default 3.2")
+            .defineInRange("reverseRatio", 3.2, 0.1, 20.0);
+
     static { BUILDER.pop(); }
 
     // =======================================================================
@@ -31,7 +54,7 @@ public class Config {
     public static final ModConfigSpec.DoubleValue DRIVETRAIN_TORQUE_SCALE = BUILDER
             .comment("Converts real crank torque (Nm) into Sable's world scale,",
                     "to account for Minecraft-scale car mass")
-            .defineInRange("drivetrainTorqueScale", 0.016, 0.0001, 10.0);
+            .defineInRange("drivetrainTorqueScale", 0.024, 0.0001, 10.0);
 
     public static final ModConfigSpec.DoubleValue DIFFERENTIAL_ANTISLIP_TORQUE = BUILDER
             .comment("Limited-slip differential lock: 0 = open diff (inside wheel spins up freely), 200+ is like",
@@ -127,4 +150,43 @@ public class Config {
     static { BUILDER.pop(); }
 
     static final ModConfigSpec SPEC = BUILDER.build();
+
+    // Parse the gearRatios string into an array, cached so its only reparsed when the string changes;
+    // drops unparseable entries
+    private static String cachedGearString;
+    private static double[] cachedGearRatios = DEFAULT_GEAR_RATIOS;
+
+    public static double[] gearRatios() {
+        String raw = GEAR_RATIOS.get();
+        if (!raw.equals(cachedGearString)) {
+            cachedGearString = raw;
+            cachedGearRatios = parseGearRatios(raw);
+        }
+        return cachedGearRatios;
+    }
+
+    private static double[] parseGearRatios(String raw) {
+        List<Double> ratios = new ArrayList<>();
+        for (String part : raw.split(",")) {
+            part = part.trim();
+            if (part.isEmpty()) {
+                continue;
+            }
+            try {
+                double value = Double.parseDouble(part);
+                if (value > 0.0) {
+                    ratios.add(value);
+                }
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        if (ratios.isEmpty()) {
+            return DEFAULT_GEAR_RATIOS;
+        }
+        double[] out = new double[ratios.size()];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = ratios.get(i);
+        }
+        return out;
+    }
 }

@@ -11,9 +11,6 @@ public record EngineSpec(
         double idleRpm,
         double redlineRpm,
         double peakTorque,
-        double[] gearRatios,
-        double reverseRatio,
-        double finalDrive,
         double shiftUpRpm,
         double shiftDownRpm,
         double drivelineEfficiency
@@ -21,22 +18,9 @@ public record EngineSpec(
 
     // still working on tuning this
     public static final EngineSpec RACING_V8_HYBRID = new EngineSpec(
-            5000, 18000, 420,
-            new double[]{3.20, 2.49, 2.00, 1.67, 1.44, 1.26, 1.00},
-            3.20, 14.0, 16000, 11000, 0.93
+            5000, 18000, 320, 16000, 11000, 0.93
     );
 
-    public double overallRatio(int gear) {
-        return this.gearRatios[gear] * this.finalDrive;
-    }
-
-    public double overallReverseRatio() {
-        return this.reverseRatio * this.finalDrive;
-    }
-
-    public int topGear() {
-        return this.gearRatios.length - 1;
-    }
 
 
     // Crank torque in (Nm) at full throttle for a 2011 F1 2.4L V8
