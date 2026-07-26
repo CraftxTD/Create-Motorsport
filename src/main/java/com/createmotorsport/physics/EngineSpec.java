@@ -22,7 +22,6 @@ public record EngineSpec(
     );
 
 
-
     // Crank torque in (Nm) at full throttle for a 2011 F1 2.4L V8
 
     public double torqueAt(double rpm) {

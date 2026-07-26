@@ -54,7 +54,7 @@ public class Config {
     public static final ModConfigSpec.DoubleValue DRIVETRAIN_TORQUE_SCALE = BUILDER
             .comment("Converts real crank torque (Nm) into Sable's world scale,",
                     "to account for Minecraft-scale car mass")
-            .defineInRange("drivetrainTorqueScale", 0.024, 0.0001, 10.0);
+            .defineInRange("drivetrainTorqueScale", 0.03, 0.0001, 10.0);
 
     public static final ModConfigSpec.DoubleValue DIFFERENTIAL_ANTISLIP_TORQUE = BUILDER
             .comment("Limited-slip differential lock: 0 = open diff (inside wheel spins up freely), 200+ is like",
@@ -67,6 +67,14 @@ public class Config {
                     "keeps most of its grip until here, then that grip is held; LOWER = more arcade-y,",
                     "HIGHER = easier to spin out; default 4.0")
             .defineInRange("simSlipLimit", 4.0, 0.8, 8.0);
+
+    public static final ModConfigSpec.DoubleValue SIM_LATERAL_GRIP = BUILDER
+            .comment("SIM tire model only; lateral (sideways) grip as a multiple of longitudinal grip.",
+                    "Changing from 1.0 creates a friction ellipse instead of a circle",
+                    "1.0 = equal both ways (friction circle)",
+                    ">1 = more sideways grip that might be considered more realistic,",
+                    "But its still being tested, so default is 1.0 for now")
+            .defineInRange("simLateralGrip", 1.0, 0.3, 3.0);
 
     public static final ModConfigSpec.DoubleValue TIRE_FORCE_RELAXATION = BUILDER
             .comment("How fast the longitudinal tire force chases its target each substep",
@@ -147,9 +155,45 @@ public class Config {
                     "~1.8 and the first half of the signal only asks for ~30% power, easier to feather the throttle")
             .defineInRange("pedalInputGamma", 1.8, 1.0, 4.0);
 
+    public static final ModConfigSpec.BooleanValue ENABLE_ADVANCED_INPUT = BUILDER
+            .comment("Enable Racing Wheel / Pedal support, or any other advanced controller",
+                    "Leave off if you only use standard gamepads. Default is true")
+            .define("enableAdvancedInput", true);
+
+    static { BUILDER.pop(); }
+
+    // =========================================================================
+    // ANIMATION
+    // =======================================================================
+    static { BUILDER.push("animation"); }
+
+    public static final ModConfigSpec.DoubleValue STEERING_WHEEL_MAX_ANGLE = BUILDER
+            .comment("How far the steering wheel rim turns at full lock, in degrees, each way",
+                    "The wheel animates according to the scaled analog input",
+                    "This number is purely cosmetic, default 450\\({}^{\\circ }\\)")
+            .defineInRange("steeringWheelMaxAngle", 450.0, 30.0, 1080.0);
+
     static { BUILDER.pop(); }
 
     static final ModConfigSpec SPEC = BUILDER.build();
+
+
+    // for the csv logging, dump the entire config as "section.name,\"value\"" lines, to help identify issues in bug reports
+    public static List<String> dumpForLog() {
+        List<String> out = new ArrayList<>();
+        for (java.lang.reflect.Field field : Config.class.getDeclaredFields()) {
+            if (!ModConfigSpec.ConfigValue.class.isAssignableFrom(field.getType())) {
+                continue;
+            }
+            try {
+                ModConfigSpec.ConfigValue<?> value = (ModConfigSpec.ConfigValue<?>) field.get(null);
+                String path = String.join(".", value.getPath());
+                out.add(path + ",\"" + value.get() + "\"");
+            } catch (Exception ignored) {
+            }
+        }
+        return out;
+    }
 
     // Parse the gearRatios string into an array, cached so its only reparsed when the string changes;
     // drops unparseable entries
@@ -178,6 +222,7 @@ public class Config {
                     ratios.add(value);
                 }
             } catch (NumberFormatException ignored) {
+                // skip garbage entries rather than blow up the whole drivetrain
             }
         }
         if (ratios.isEmpty()) {

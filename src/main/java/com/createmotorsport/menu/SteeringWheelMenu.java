@@ -20,15 +20,31 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 public class SteeringWheelMenu extends AbstractContainerMenu {
     private static final int GHOST_COUNT = SteeringWheelBlockEntity.SLOT_COUNT;
 
-    public static final int WIDTH = 200;
-    public static final int ROW_Y0 = 22;
+    public static final int WIDTH = 374;
+    public static final int ROW_Y0 = 40;
     public static final int ROW_H = 19;
-    public static final int BIND_X = 90;
-    public static final int BIND_W = 58;
-    public static final int SLOT_A_X = 158;
-    public static final int SLOT_B_X = 180;
-    public static final int INV_X = 8;
-    public static final int INV_Y = ROW_Y0 + SteeringWheelBlockEntity.CONTROLS.length * ROW_H + 8;
+
+    // two columns so people with small screens can maybe see it all by default now
+    public static final int ROWS_PER_COL = (SteeringWheelBlockEntity.CONTROLS.length + 1) / 2;
+    private static final int COL0_X = 8;
+    private static final int COL_STRIDE = 184;
+    private static final int LABEL_OFF = 4;
+    public static final int BIND_OFF = 82;
+    public static final int BIND_W = 50;
+    private static final int SLOT_A_OFF = 136;
+    private static final int SLOT_B_OFF = 158;
+    public static final int COLUMN_W = SLOT_B_OFF + 18;
+
+    public static int columnX(int ordinal) { return COL0_X + (ordinal < ROWS_PER_COL ? 0 : COL_STRIDE); }
+    public static int rowY(int ordinal)    { return ROW_Y0 + (ordinal < ROWS_PER_COL ? ordinal : ordinal - ROWS_PER_COL) * ROW_H; }
+    public static int labelX(int ordinal)  { return columnX(ordinal) + LABEL_OFF; }
+    public static int bindX(int ordinal)   { return columnX(ordinal) + BIND_OFF; }
+    public static int slotAX(int ordinal)  { return columnX(ordinal) + SLOT_A_OFF; }
+    public static int slotBX(int ordinal)  { return columnX(ordinal) + SLOT_B_OFF; }
+
+    // inventory
+    public static final int INV_X = (WIDTH - 9 * 18) / 2;
+    public static final int INV_Y = ROW_Y0 + ROWS_PER_COL * ROW_H + 10;
     public static final int HOTBAR_Y = INV_Y + 58;
 
     private final Level level;
@@ -81,9 +97,9 @@ public class SteeringWheelMenu extends AbstractContainerMenu {
         }
 
         for (SteeringControl control : SteeringWheelBlockEntity.CONTROLS) {
-            int y = ROW_Y0 + control.ordinal() * ROW_H;
-            addGhostSlot(SteeringWheelBlockEntity.slotA(control), SLOT_A_X, y);
-            addGhostSlot(SteeringWheelBlockEntity.slotB(control), SLOT_B_X, y);
+            int o = control.ordinal();
+            addGhostSlot(SteeringWheelBlockEntity.slotA(control), slotAX(o), rowY(o));
+            addGhostSlot(SteeringWheelBlockEntity.slotB(control), slotBX(o), rowY(o));
         }
 
         for (int row = 0; row < 3; row++) {

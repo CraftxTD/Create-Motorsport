@@ -753,7 +753,11 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
             double denom = Math.max(Math.abs(vLon), 2.0);
             double slipLon = (wheelSpeed - vLon) / denom;
             double slipLat = vLat / Math.max(Math.abs(vLon), 0.05);
-            double s = Math.sqrt(slipLon * slipLon + slipLat * slipLat);
+
+            // friction ellipse instead of circle for configurable lateral slipperiness
+            double latGrip = Config.SIM_LATERAL_GRIP.getAsDouble();
+            double slipLatEff = slipLat / latGrip;
+            double s = Math.sqrt(slipLon * slipLon + slipLatEff * slipLatEff);
 
             double forwardForce = 0.0;
             double lateralForce = 0.0;

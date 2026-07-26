@@ -1,73 +1,69 @@
 package com.createmotorsport.client;
 
+import com.createmotorsport.Config;
 import org.lwjgl.glfw.GLFW;
-import org.lwjgl.glfw.GLFWGamepadState;
 
-import java.nio.FloatBuffer;
 import java.util.HashSet;
 import java.util.Set;
-
 
 public final class GamepadInput {
 
     private static final float STICK_THRESHOLD = 0.35F;
     private static final float TRIGGER_THRESHOLD = 0.15F;
+    private static final float RAW_AXIS_THRESHOLD = 0.20F;
 
-    private static GLFWGamepadState state;
-    private static boolean present;
-    private static final boolean[] buttons = new boolean[GamepadCodes.BUTTON_COUNT];
-    private static final float[] axes = new float[6];
+    private static final JoystickPoller POLLER = new JoystickPoller();
     private static final Set<Integer> captureLast = new HashSet<>();
 
     private GamepadInput() {
     }
 
+    private static boolean advanced() {
+        return Config.ENABLE_ADVANCED_INPUT.get();
+    }
+
     public static void poll() {
-        if (state == null) {
-            state = GLFWGamepadState.create();
-        }
-        for (int d = GLFW.GLFW_JOYSTICK_1; d <= GLFW.GLFW_JOYSTICK_LAST; d++) {
-            if (GLFW.glfwJoystickIsGamepad(d) && GLFW.glfwGetGamepadState(d, state)) {
-                present = true;
-                for (int i = 0; i < GamepadCodes.BUTTON_COUNT; i++) {
-                    buttons[i] = state.buttons(i) != 0;
-                }
-                FloatBuffer ax = state.axes();
-                for (int i = 0; i < axes.length; i++) {
-                    axes[i] = ax.get(i);
-                }
-                return;
-            }
-        }
-        present = false;
-        for (int i = 0; i < GamepadCodes.BUTTON_COUNT; i++) {
-            buttons[i] = false;
-        }
-        for (int i = 0; i < axes.length; i++) {
-            axes[i] = 0.0F;
-        }
+        POLLER.poll(advanced());
     }
 
     public static boolean hasGamepad() {
-        return present;
+        return POLLER.anyPresent();
     }
 
     public static float analogMagnitude(int code) {
-        if (!present || !GamepadCodes.isGamepadCode(code)) {
+        if (!GamepadCodes.isGamepadCode(code)) {
             return 0.0F;
         }
-        if (GamepadCodes.isButton(code)) {
-            int i = GamepadCodes.buttonIndex(code);
-            return (i >= 0 && i < GamepadCodes.BUTTON_COUNT && buttons[i]) ? 1.0F : 0.0F;
+        int d = GamepadCodes.deviceOf(code);
+        if (!POLLER.present(d)) {
+            return 0.0F;
         }
-        if (GamepadCodes.isTrigger(code)) {
-            float raw = (axes[GamepadCodes.triggerAxis(code)] + 1.0F) * 0.5F; // -1 rest to +1 pulled
+        if (GamepadCodes.isBasicButton(code)) {
+            return POLLER.button(d, GamepadCodes.basicButtonIndex(code)) ? 1.0F : 0.0F;
+        }
+        if (GamepadCodes.isBasicTrigger(code)) {
+            float raw = (POLLER.axis(d, GamepadCodes.triggerAxis(code)) + 1.0F) * 0.5F; // -1 rest to +1 pulled
             return raw <= TRIGGER_THRESHOLD ? 0.0F : ramp(raw, TRIGGER_THRESHOLD);
         }
-        if (GamepadCodes.isStick(code)) {
-            float v = axes[GamepadCodes.stickAxis(code)];
+        if (GamepadCodes.isBasicStick(code)) {
+            float v = POLLER.axis(d, GamepadCodes.stickAxis(code));
             float dir = GamepadCodes.stickPositive(code) ? v : -v;
             return dir <= STICK_THRESHOLD ? 0.0F : ramp(dir, STICK_THRESHOLD);
+        }
+        if (GamepadCodes.isRawButton(code)) {
+            return POLLER.button(d, GamepadCodes.rawButtonIndex(code)) ? 1.0F : 0.0F;
+        }
+        if (GamepadCodes.isRawAxisPos(code)) {
+            float v = POLLER.axis(d, GamepadCodes.rawAxisIndex(code));
+            return v <= RAW_AXIS_THRESHOLD ? 0.0F : ramp(v, RAW_AXIS_THRESHOLD);
+        }
+        if (GamepadCodes.isRawAxisNeg(code)) {
+            float v = -POLLER.axis(d, GamepadCodes.rawAxisIndex(code));
+            return v <= RAW_AXIS_THRESHOLD ? 0.0F : ramp(v, RAW_AXIS_THRESHOLD);
+        }
+        if (GamepadCodes.isRawHat(code)) {
+            int bits = POLLER.hat(d, GamepadCodes.rawHatIndex(code)) & 0xFF;
+            return (bits & hatBit(GamepadCodes.rawHatDir(code))) != 0 ? 1.0F : 0.0F;
         }
         return 0.0F;
     }
@@ -97,40 +93,69 @@ public final class GamepadInput {
         return found;
     }
 
+    // Everything currently pressed across every device, as synthetic codes (for bind capture)
     private static Set<Integer> pressedSet() {
         Set<Integer> set = new HashSet<>();
-        if (!present) {
-            return set;
-        }
-        for (int i = 0; i < GamepadCodes.BUTTON_COUNT; i++) {
-            if (buttons[i]) {
-                set.add(GamepadCodes.button(i));
+        for (int d = 0; d < JoystickPoller.MAX_DEVICES; d++) {
+            if (!POLLER.present(d)) {
+                continue;
+            }
+            if (POLLER.isBasic(d)) {
+                for (int i = 0; i < GamepadCodes.BUTTON_COUNT; i++) {
+                    if (POLLER.button(d, i)) {
+                        set.add(GamepadCodes.basicButton(d, i));
+                    }
+                }
+                if ((POLLER.axis(d, GamepadCodes.AXIS_LT) + 1.0F) * 0.5F >= TRIGGER_THRESHOLD) {
+                    set.add(GamepadCodes.triggerLT(d));
+                }
+                if ((POLLER.axis(d, GamepadCodes.AXIS_RT) + 1.0F) * 0.5F >= TRIGGER_THRESHOLD) {
+                    set.add(GamepadCodes.triggerRT(d));
+                }
+                addBasicStick(set, d, POLLER.axis(d, GamepadCodes.AXIS_LEFT_X), POLLER.axis(d, GamepadCodes.AXIS_LEFT_Y), 0);
+                addBasicStick(set, d, POLLER.axis(d, GamepadCodes.AXIS_RIGHT_X), POLLER.axis(d, GamepadCodes.AXIS_RIGHT_Y), 4);
+            } else {
+                for (int i = 0; i < POLLER.buttonCount(d); i++) {
+                    if (POLLER.button(d, i)) {
+                        set.add(GamepadCodes.rawButton(d, i));
+                    }
+                }
+                for (int a = 0; a < POLLER.axisCount(d); a++) {
+                    float v = POLLER.axis(d, a);
+                    if (v >= RAW_AXIS_THRESHOLD) {
+                        set.add(GamepadCodes.rawAxisPos(d, a));
+                    } else if (v <= -RAW_AXIS_THRESHOLD) {
+                        set.add(GamepadCodes.rawAxisNeg(d, a));
+                    }
+                }
+                for (int h = 0; h < POLLER.hatCount(d); h++) {
+                    int bits = POLLER.hat(d, h) & 0xFF;
+                    for (int dir = 0; dir < 4; dir++) {
+                        if ((bits & hatBit(dir)) != 0) {
+                            set.add(GamepadCodes.rawHat(d, h, dir));
+                        }
+                    }
+                }
             }
         }
-        if ((axes[GamepadCodes.AXIS_LT] + 1.0F) * 0.5F >= TRIGGER_THRESHOLD) {
-            set.add(GamepadCodes.TRIGGER_LT);
-        }
-        if ((axes[GamepadCodes.AXIS_RT] + 1.0F) * 0.5F >= TRIGGER_THRESHOLD) {
-            set.add(GamepadCodes.TRIGGER_RT);
-        }
-        addStick(set, axes[GamepadCodes.AXIS_LEFT_X], axes[GamepadCodes.AXIS_LEFT_Y], 0);
-        addStick(set, axes[GamepadCodes.AXIS_RIGHT_X], axes[GamepadCodes.AXIS_RIGHT_Y], 4);
         return set;
     }
 
-    private static void addStick(Set<Integer> set, float x, float y, int kBase) {
-        if (x >= STICK_THRESHOLD) {
-            set.add(GamepadCodes.stick(kBase));       // right (+x)
-        }
-        if (x <= -STICK_THRESHOLD) {
-            set.add(GamepadCodes.stick(kBase + 1));   // left  (-x)
-        }
-        if (y >= STICK_THRESHOLD) {
-            set.add(GamepadCodes.stick(kBase + 2));   // down  (+y)
-        }
-        if (y <= -STICK_THRESHOLD) {
-            set.add(GamepadCodes.stick(kBase + 3));   // up    (-y)
-        }
+    private static void addBasicStick(Set<Integer> set, int d, float x, float y, int kBase) {
+        if (x >= STICK_THRESHOLD)  set.add(GamepadCodes.stickCode(d, kBase));       // right (+x)
+        if (x <= -STICK_THRESHOLD) set.add(GamepadCodes.stickCode(d, kBase + 1));   // left  (-x)
+        if (y >= STICK_THRESHOLD)  set.add(GamepadCodes.stickCode(d, kBase + 2));   // down  (+y)
+        if (y <= -STICK_THRESHOLD) set.add(GamepadCodes.stickCode(d, kBase + 3));   // up    (-y)
+    }
+
+    // GamepadCodes hat direction
+    private static int hatBit(int dir) {
+        return switch (dir) {
+            case 0 -> GLFW.GLFW_HAT_UP;
+            case 1 -> GLFW.GLFW_HAT_RIGHT;
+            case 2 -> GLFW.GLFW_HAT_DOWN;
+            default -> GLFW.GLFW_HAT_LEFT;
+        };
     }
 
     private static float ramp(float raw, float threshold) {

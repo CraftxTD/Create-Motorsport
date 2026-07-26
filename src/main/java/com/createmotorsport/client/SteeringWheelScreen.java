@@ -71,21 +71,22 @@ public class SteeringWheelScreen extends AbstractContainerScreen<SteeringWheelMe
 
         for (SteeringControl control : SteeringWheelBlockEntity.CONTROLS) {
             int i = control.ordinal();
-            int y = t + SteeringWheelMenu.ROW_Y0 + i * SteeringWheelMenu.ROW_H;
-            g.fill(l + 8, y - 2, l + w - 8, y + 16, ROW);
-            g.drawString(font, control.getDisplayName(), l + 12, y + 4, 0xFFFFFFFF, false);
+            int y = t + SteeringWheelMenu.rowY(i);
+            int cx = l + SteeringWheelMenu.columnX(i);
+            g.fill(cx, y - 2, cx + SteeringWheelMenu.COLUMN_W, y + 16, ROW);
+            g.drawString(font, control.getDisplayName(), l + SteeringWheelMenu.labelX(i), y + 4, 0xFFFFFFFF, false);
 
-            int bx = l + SteeringWheelMenu.BIND_X;
+            int bx = l + SteeringWheelMenu.bindX(i);
             g.fill(bx, y - 1, bx + SteeringWheelMenu.BIND_W, y + 15, capturingControl == i ? BIND_ACTIVE : BIND);
             String label = capturingControl == i ? "press key" : keyName(keyCodeFor(i));
             g.drawString(font, label, bx + 3, y + 4, 0xFFDDDDDD, false);
 
-            drawSlot(g, l + SteeringWheelMenu.SLOT_A_X, y, FREQ_A_TINT);
-            drawSlot(g, l + SteeringWheelMenu.SLOT_B_X, y, FREQ_B_TINT);
+            drawSlot(g, l + SteeringWheelMenu.slotAX(i), y, FREQ_A_TINT);
+            drawSlot(g, l + SteeringWheelMenu.slotBX(i), y, FREQ_B_TINT);
         }
 
         int invY = t + SteeringWheelMenu.INV_Y;
-        g.fill(l + SteeringWheelMenu.INV_X - 4, invY - 2, l + w - 4, t + h - 4, 0xFF222222);
+        g.fill(l + SteeringWheelMenu.INV_X - 4, invY - 2, l + SteeringWheelMenu.INV_X + 9 * 18 + 4, t + h - 4, 0xFF222222);
 
         boolean driving = isDriving();
         int bx = l + w - BTN_W - 6;
@@ -212,8 +213,8 @@ public class SteeringWheelScreen extends AbstractContainerScreen<SteeringWheelMe
     private int bindButtonAt(double mx, double my) {
         for (SteeringControl control : SteeringWheelBlockEntity.CONTROLS) {
             int i = control.ordinal();
-            int y = topPos + SteeringWheelMenu.ROW_Y0 + i * SteeringWheelMenu.ROW_H;
-            int bx = leftPos + SteeringWheelMenu.BIND_X;
+            int y = topPos + SteeringWheelMenu.rowY(i);
+            int bx = leftPos + SteeringWheelMenu.bindX(i);
             if (mx >= bx && mx < bx + SteeringWheelMenu.BIND_W && my >= y - 1 && my < y + 15) {
                 return i;
             }

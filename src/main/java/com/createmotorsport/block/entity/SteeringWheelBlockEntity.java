@@ -120,15 +120,12 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
     private DriveMode driveMode = DriveMode.RWD;
     private UUID user;
 
-    // for steering wheel animation, max turn degrees
-    private static final double MAX_WHEEL_ANGLE = 120.0;
-
     // Dashboard telemetry, gathered on the server and synced to the client for the screen
     private int speedKmh;
     private int gearCode = 1; // 0 = R, 1 = N, 2 = 1st, 3 = 2nd gear, etc
     private int rpm;
     private boolean brake;
-    private int steer; // -1 left, 0, +1 right
+    private int steer; // animation now responds to analog input, so -1 left through +1 right
     private int powerMode = 8;
     private boolean tractionControlOn;
     private boolean boosting;
@@ -288,8 +285,10 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
             return;
         }
         if (level.isClientSide) {
+            // configurable steering that responds to analog input
+            double target = (steer / 100.0) * com.createmotorsport.Config.STEERING_WHEEL_MAX_ANGLE.getAsDouble();
             lastClientWheelAngle = clientWheelAngle;
-            clientWheelAngle = Mth.lerp(0.3, clientWheelAngle, steer * MAX_WHEEL_ANGLE);
+            clientWheelAngle = Mth.lerp(0.3, clientWheelAngle, target);
             return;
         }
 
@@ -422,6 +421,12 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
         }
         logTicksRemaining--;
         if (logTicksRemaining <= 0) {
+            // appends the full config to every csv so its easier to identify issues with bug reports
+            sendLine(TelemetryLinePacket.KIND_ROW, "");
+            sendLine(TelemetryLinePacket.KIND_ROW, "config_option,value");
+            for (String configLine : com.createmotorsport.Config.dumpForLog()) {
+                sendLine(TelemetryLinePacket.KIND_ROW, configLine);
+            }
             sendLine(TelemetryLinePacket.KIND_END, "");
             logRecipient = null;
         }
@@ -542,11 +547,13 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
         }
 
         boolean braking = (inputMask & (1 << SteeringControl.BRAKE.ordinal())) != 0;
-        int steering = (((inputMask & (1 << SteeringControl.STEER_RIGHT.ordinal())) != 0) ? 1 : 0)
-                - (((inputMask & (1 << SteeringControl.STEER_LEFT.ordinal())) != 0) ? 1 : 0);
+
+        // analog steering wheel animation, synced to client. -100 fully left (user chooses how much that is), +100 fully right
+        // driverSteer01 is +1 for left
+        int steering = Math.round(Mth.clamp(-driverSteer01, -1.0F, 1.0F) * 100.0F);
 
         boolean changed = speed != speedKmh || gear != gearCode || Math.abs(enginRpm - rpm) > 50
-                || braking != brake || steering != steer
+                || braking != brake || Math.abs(steering - steer) > 2
                 || mode != powerMode || tc != tractionControlOn || boost != boosting;
         speedKmh = speed;
         gearCode = gear;
