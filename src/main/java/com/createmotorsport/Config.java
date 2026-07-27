@@ -65,16 +65,16 @@ public class Config {
     public static final ModConfigSpec.DoubleValue SIM_SLIP_LIMIT = BUILDER
             .comment("SIM tire model only; caps how far up the slip curve the slip is allowed to travel, so the curve",
                     "keeps most of its grip until here, then that grip is held; LOWER = more arcade-y,",
-                    "HIGHER = easier to spin out; default 4.0")
-            .defineInRange("simSlipLimit", 4.0, 0.8, 8.0);
+                    "HIGHER = easier to spin out; default 1.5")
+            .defineInRange("simSlipLimit", 1.5, 0.8, 5.0);
 
     public static final ModConfigSpec.DoubleValue SIM_LATERAL_GRIP = BUILDER
             .comment("SIM tire model only; lateral (sideways) grip as a multiple of longitudinal grip.",
                     "Changing from 1.0 creates a friction ellipse instead of a circle",
                     "1.0 = equal both ways (friction circle)",
                     ">1 = more sideways grip that might be considered more realistic,",
-                    "But its still being tested, so default is 1.0 for now")
-            .defineInRange("simLateralGrip", 1.0, 0.3, 3.0);
+                    "But its still being tested, default is 1.5 for now")
+            .defineInRange("simLateralGrip", 1.5, 0.3, 3.0);
 
     public static final ModConfigSpec.DoubleValue TIRE_FORCE_RELAXATION = BUILDER
             .comment("How fast the longitudinal tire force chases its target each substep",
