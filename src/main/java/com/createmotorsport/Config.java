@@ -124,8 +124,8 @@ public class Config {
     public static final ModConfigSpec.BooleanValue SIM_TIRE_MODEL = BUILDER
             .comment("false = ARCADE tire model, like driving on rails",
                     "true = SIM tire model: more realistic, lets you spin out of control",
-                    "Default is ARCADE, so false")
-            .define("simTireModel", false);
+                    "Default is SIM, so true")
+            .define("simTireModel", true);
 
     static { BUILDER.pop(); }
 
