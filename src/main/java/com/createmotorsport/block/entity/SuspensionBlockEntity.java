@@ -54,7 +54,6 @@ import software.bernie.geckolib.animatable.instance.AnimatableInstanceCache;
 import software.bernie.geckolib.animation.AnimatableManager;
 import software.bernie.geckolib.animation.AnimationController;
 import software.bernie.geckolib.animation.PlayState;
-import software.bernie.geckolib.animation.RawAnimation;
 import software.bernie.geckolib.util.GeckoLibUtil;
 
 import java.util.Collection;
@@ -222,11 +221,6 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
     // defaults to rear axle, which means the user does need to change the other to 'front' for now, will fix later
     private boolean frontAxle;
 
-    // geckolib clips from blockbench
-    private static final RawAnimation AXLE_ROTATION = RawAnimation.begin().thenLoop("axle_rotation");
-    private static final RawAnimation AXLE_ROTATION_REVERSE = RawAnimation.begin().thenLoop("axle_rotation_reverse");
-    private static final RawAnimation LEFT_SUSPENSION = RawAnimation.begin().thenLoop("left_suspension");
-    private static final RawAnimation RIGHT_SUSPENSION = RawAnimation.begin().thenLoop("right_suspension");
     private final AnimatableInstanceCache animationCache = GeckoLibUtil.createInstanceCache(this);
 
     public SuspensionBlockEntity(BlockPos pos, BlockState state) {
@@ -253,39 +247,12 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
 
     @Override
     public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
-        // wheel spin
-        controllers.add(new AnimationController<>(this, "axle", 0, state -> {
-            float speed = getWheelAnimationSpeed();
-            if (Math.abs(speed) <= 0.001F) {
-                state.setControllerSpeed(0.0F);
-                return state.setAndContinue(AXLE_ROTATION);
-            }
-            state.setControllerSpeed(Math.abs(speed));
-            return state.setAndContinue(speed < 0.0F ? AXLE_ROTATION_REVERSE : AXLE_ROTATION);
-        }));
-        // wishbone bob on each side
-        controllers.add(new AnimationController<>(this, "left_suspension", 0, state ->
-                isSuspensionMoving(WheelSide.LEFT) ? state.setAndContinue(LEFT_SUSPENSION) : PlayState.STOP));
-        controllers.add(new AnimationController<>(this, "right_suspension", 0, state ->
-                isSuspensionMoving(WheelSide.RIGHT) ? state.setAndContinue(RIGHT_SUSPENSION) : PlayState.STOP));
+        controllers.add(new AnimationController<>(this, "idle", 0, state -> PlayState.STOP));
     }
 
     @Override
     public AnimatableInstanceCache getAnimatableInstanceCache() {
         return animationCache;
-    }
-
-    // animation speed derived from average synced wheel angular velocity
-    private float getWheelAnimationSpeed() {
-        double avgOmega = 0.5 * (leftWheel.syncedOmega + rightWheel.syncedOmega);
-        return (float) (avgOmega / (2.0 * Math.PI));
-    }
-
-    private static final double SUSPENSION_BUMP_RATE = 0.03;
-
-    private boolean isSuspensionMoving(WheelSide side) {
-        WheelState w = getWheel(side);
-        return hasTire(side) && Math.abs(w.clientSpringLength - w.lastClientSpringLength) > SUSPENSION_BUMP_RATE;
     }
 
     // =======================================
@@ -651,10 +618,11 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         Vec3 hardpoint = worldPosition.relative(sideDir).getCenter();
         Vector3d hardpointJoml = JOMLConversion.toJOML(hardpoint);
 
-        // steering
-        Vector3d forward = new Vector3d(facing.getStepX(), 0.0, facing.getStepZ()).rotateY(chasingSteer);
+        // Ackermann geometry on the steering now, so the outer and inner wheels have to take their own angles (see wheelSteerAngle)
+        double wheelSteer = wheelSteerAngle(chasingSteer, side);
+        Vector3d forward = new Vector3d(facing.getStepX(), 0.0, facing.getStepZ()).rotateY(wheelSteer);
         Direction rightDir = facing.getClockWise();
-        Vector3d axle = new Vector3d(rightDir.getStepX(), 0.0, rightDir.getStepZ()).rotateY(chasingSteer);
+        Vector3d axle = new Vector3d(rightDir.getStepX(), 0.0, rightDir.getStepZ()).rotateY(wheelSteer);
 
         TerrainCastResult cast = castToTerrain(hardpoint, forward, pose);
         double distance = cast.distance();
@@ -717,6 +685,14 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
 
         Vector3d springImpulse = new Vector3d(hitNormal).mul(springForce * dt);
         forceTotal.applyImpulseAtPoint(massData, hardpointJoml, springImpulse);
+
+
+        // DOWNFORCE -- so add onto this with the spoilers or wings. This is just user configured for now to apply 0.06 by default for test drive purposes
+        double airspeed = localVelocity.length();
+        double downforce = Config.AERO_DOWNFORCE.getAsDouble() * airspeed * airspeed;
+        if (downforce > 0.0) {
+            forceTotal.applyImpulseAtPoint(massData, hardpointJoml, new Vector3d(0.0, -downforce * dt, 0.0));
+        }
 
         // ================================
         // Load sensitive tire friction
@@ -1032,6 +1008,21 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         return (float) Mth.lerp(partialTicks, w.lastClientSpringLength, w.clientSpringLength);
     }
 
+    public static final double RENDER_REST_RAISE = 0.8;
+
+    private static double springToRaise(double springLength) {
+        if (springLength >= REST_LENGTH) {
+            double t = Mth.clamp((springLength - REST_LENGTH) / MAX_DROOP_RENDER, 0.0, 1.0);
+            return RENDER_REST_RAISE * (1.0 - t);
+        }
+        double t = Mth.clamp((REST_LENGTH - springLength) / MAX_TRAVEL, 0.0, 1.0);
+        return RENDER_REST_RAISE + (1.0 - RENDER_REST_RAISE) * t;
+    }
+
+    public float getLerpedRaise(WheelSide side, float partialTicks) {
+        return (float) springToRaise(getLerpedSpringLength(side, partialTicks));
+    }
+
     public float getLerpedAngle(WheelSide side, float partialTicks) {
         WheelState w = getWheel(side);
         return (float) Mth.lerp(partialTicks, w.lastAngle, w.angle);
@@ -1039,6 +1030,26 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
 
     public float getLerpedSteer(float partialTicks) {
         return (float) Mth.lerp(partialTicks, lastChasingSteer, chasingSteer);
+    }
+
+
+    // Ackermann geometry for the steering; >0 = anti-Ackermann (outer sharper), <0 = classic Ackermann (inner sharper), 0 = parallel
+    public double wheelSteerAngle(double base, WheelSide side) {
+        double k = Config.STEERING_ANTI_ACKERMANN.getAsDouble();
+        if (k == 0.0 || base == 0.0) {
+            return base;
+        }
+        boolean rightIsOuter = base > 0.0;
+        boolean isOuter = (side == WheelSide.RIGHT) == rightIsOuter;
+        boolean larger = (k > 0.0) == isOuter;
+        double half = 0.5 * Math.abs(k);
+        double t = Math.tan(Math.abs(base));
+        double denom = Math.max(0.3, larger ? 1.0 - half * t : 1.0 + half * t);
+        return Math.copySign(Math.atan(t / denom), base);
+    }
+
+    public float getLerpedSteer(WheelSide side, float partialTicks) {
+        return (float) wheelSteerAngle(getLerpedSteer(partialTicks), side);
     }
 
     // Tire placement animation

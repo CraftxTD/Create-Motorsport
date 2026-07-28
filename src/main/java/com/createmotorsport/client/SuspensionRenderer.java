@@ -27,6 +27,9 @@ public class SuspensionRenderer extends GeoBlockRenderer<SuspensionBlockEntity> 
 
     private static final float DROP_HEIGHT = 0.5F;
 
+    private static final float WHEEL_LIFT = 7.0F / 16.0F;
+
+
     private static final Vector3f LEFT_HUB = new Vector3f(8.0F / 16F, 1.0F / 16F, (8.0F + 25.0F) / 16F);
     private static final Vector3f RIGHT_HUB = new Vector3f(8.0F / 16F, 1.0F / 16F, (8.0F - 25.0F) / 16F);
 
@@ -37,8 +40,10 @@ public class SuspensionRenderer extends GeoBlockRenderer<SuspensionBlockEntity> 
     @Override
     public void render(SuspensionBlockEntity be, float partialTicks, PoseStack ms, MultiBufferSource buffer,
                        int light, int overlay) {
+        ms.pushPose();
         super.render(be, partialTicks, ms, buffer, light, overlay);
         renderTires(be, partialTicks, ms, buffer, light, overlay);
+        ms.popPose();
     }
 
     @Override
@@ -68,15 +73,14 @@ public class SuspensionRenderer extends GeoBlockRenderer<SuspensionBlockEntity> 
             return;
         }
 
-        float springLength = be.getLerpedSpringLength(side, partialTicks);
-        float travel = (float) (SuspensionBlockEntity.REST_LENGTH - springLength); // + when compressed (wheel up)
+        float raiseOffset = be.getLerpedRaise(side, partialTicks) * WHEEL_LIFT; // + as the suspension compresses
         float deploy = be.getLerpedDeploy(side, partialTicks);
         float dropOffset = (1.0F - deploy) * DROP_HEIGHT; // starts high, eases to 0
         float spin = be.getLerpedAngle(side, partialTicks);
-        float steer = be.getLerpedSteer(partialTicks);
+        float steer = be.getLerpedSteer(side, partialTicks);
 
         ms.pushPose();
-        ms.translate(hub.x, hub.y + travel + dropOffset, hub.z);
+        ms.translate(hub.x, hub.y + raiseOffset + dropOffset, hub.z);
         ms.mulPose(Axis.YP.rotation(steer * STEER_SIGN)); // steering yaw
         ms.mulPose(Axis.ZP.rotation(spin * SPIN_SIGN));   // roll about the axle (Z in authored space)
 

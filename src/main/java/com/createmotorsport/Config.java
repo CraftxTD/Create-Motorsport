@@ -66,15 +66,15 @@ public class Config {
             .comment("SIM tire model only; caps how far up the slip curve the slip is allowed to travel, so the curve",
                     "keeps most of its grip until here, then that grip is held; LOWER = more arcade-y,",
                     "HIGHER = easier to spin out; default 1.5")
-            .defineInRange("simSlipLimit", 1.5, 0.8, 5.0);
+            .defineInRange("simSlipLimit", 1.5, 0.8, 8.0);
 
     public static final ModConfigSpec.DoubleValue SIM_LATERAL_GRIP = BUILDER
             .comment("SIM tire model only; lateral (sideways) grip as a multiple of longitudinal grip.",
                     "Changing from 1.0 creates a friction ellipse instead of a circle",
                     "1.0 = equal both ways (friction circle)",
-                    ">1 = more sideways grip that might be considered more realistic,",
-                    "But its still being tested, default is 1.5 for now")
-            .defineInRange("simLateralGrip", 1.5, 0.3, 3.0);
+                    ">1 = more sideways grip",
+                    "Default is 2.0 for now, but needs refining I think")
+            .defineInRange("simLateralGrip", 2, 0.3, 3.0);
 
     public static final ModConfigSpec.DoubleValue TIRE_FORCE_RELAXATION = BUILDER
             .comment("How fast the longitudinal tire force chases its target each substep",
@@ -124,8 +124,15 @@ public class Config {
     public static final ModConfigSpec.BooleanValue SIM_TIRE_MODEL = BUILDER
             .comment("false = ARCADE tire model, like driving on rails",
                     "true = SIM tire model: more realistic, lets you spin out of control",
-                    "Default is SIM, so true")
-            .define("simTireModel", true);
+                    "Default is ARCADE, so false")
+            .define("simTireModel", false);
+
+    public static final ModConfigSpec.DoubleValue AERO_DOWNFORCE = BUILDER
+            .comment("Configurable aerodynamic downforce for testing purposes",
+                    "(load = this * speed_m/s^2)",
+                    "Will be incorporated into spoilers/wings/diffusers later",
+                    "0 = off. Default is 0.06")
+            .defineInRange("aeroDownforce", 0.06, 0.0, 2.0);
 
     static { BUILDER.pop(); }
 
@@ -160,6 +167,25 @@ public class Config {
                     "Leave off if you only use standard gamepads. Default is true")
             .define("enableAdvancedInput", true);
 
+    public static final ModConfigSpec.DoubleValue ADVANCED_INPUT_DEADZONE = BUILDER
+            .comment("Advanced input only; default 0.05")
+            .defineInRange("advancedInputDeadzone", 0.05, 0.0, 0.6);
+
+    public static final ModConfigSpec.DoubleValue STICK_DEADZONE = BUILDER
+            .comment("Standard gamepad only; left/right thumbstick deadzone, default 0.10")
+            .defineInRange("stickDeadzone", 0.10, 0.0, 0.6);
+
+    public static final ModConfigSpec.DoubleValue TRIGGER_DEADZONE = BUILDER
+            .comment("Standard gamepad only; left/right trigger deadzone, default 0.10")
+            .defineInRange("triggerDeadzone", 0.10, 0.0, 0.6);
+
+    public static final ModConfigSpec.DoubleValue STEERING_ANTI_ACKERMANN = BUILDER
+            .comment("F1 cars use something called \"Anti-Ackermann\" steering",
+                    "0 = both front wheels turn the same angle (parallel, typical steering)",
+                    "Positive = anti-ackermann, so the outer wheel in a corner turns sharper than the inner,",
+                    "Default 0.5.")
+            .defineInRange("steeringAntiAckermann", 0.5, -1.0, 1.0);
+
     static { BUILDER.pop(); }
 
     // =========================================================================
@@ -170,7 +196,7 @@ public class Config {
     public static final ModConfigSpec.DoubleValue STEERING_WHEEL_MAX_ANGLE = BUILDER
             .comment("How far the steering wheel rim turns at full lock, in degrees, each way",
                     "The wheel animates according to the scaled analog input",
-                    "This number is purely cosmetic, default 450\\({}^{\\circ }\\)")
+                    "This number is purely cosmetic, default 450 degrees")
             .defineInRange("steeringWheelMaxAngle", 450.0, 30.0, 1080.0);
 
     static { BUILDER.pop(); }
