@@ -13,7 +13,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityBlock, IWrenchable {
    public static final MapCodec<DownFlapBlock> CODEC = simpleCodec(DownFlapBlock::new);
-   private static final Component CONTAINER_TITLE = "Down Flap";
+   private static final Component CONTAINER_TITLE = Component.translatable("container.createmotorsport.down_flap");
 
     public DownFlapBlock(Properties properties) {
         super(properties);
