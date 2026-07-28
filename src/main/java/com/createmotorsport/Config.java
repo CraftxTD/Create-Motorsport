@@ -65,8 +65,8 @@ public class Config {
     public static final ModConfigSpec.DoubleValue SIM_SLIP_LIMIT = BUILDER
             .comment("SIM tire model only; caps how far up the slip curve the slip is allowed to travel, so the curve",
                     "keeps most of its grip until here, then that grip is held; LOWER = more arcade-y,",
-                    "HIGHER = easier to spin out; default 1.5")
-            .defineInRange("simSlipLimit", 1.5, 0.8, 8.0);
+                    "HIGHER = easier to spin out; default 1.2")
+            .defineInRange("simSlipLimit", 1.2, 0.8, 8.0);
 
     public static final ModConfigSpec.DoubleValue SIM_LATERAL_GRIP = BUILDER
             .comment("SIM tire model only; lateral (sideways) grip as a multiple of longitudinal grip.",
@@ -90,8 +90,8 @@ public class Config {
     public static final ModConfigSpec.DoubleValue SIM_LOWSPEED_BLEND_MS = BUILDER
             .comment("SIM tire model only; below this speed (m/s) the saturated slip-angle force would jitter or spin a",
                     "car and never stop, so lateral grip blends back to the simple arcade cancellation",
-                    "Default 4.0 m/s (~14 km/h)")
-            .defineInRange("simLowSpeedBlend", 4.0, 0.5, 15.0);
+                    "Default 2.0 m/s (~7 km/h)")
+            .defineInRange("simLowSpeedBlend", 2.0, 0.5, 15.0);
 
     public static final ModConfigSpec.DoubleValue ROLLING_RESISTANCE_COEF = BUILDER
             .comment("Rolling resistance as a fraction of the tire's vertical load. Slows a coasting car and",
@@ -125,7 +125,7 @@ public class Config {
             .comment("false = ARCADE tire model, like driving on rails",
                     "true = SIM tire model: more realistic, lets you spin out of control",
                     "Default is ARCADE, so false")
-            .define("simTireModel", false);
+            .define("simTireModel", true);
 
     public static final ModConfigSpec.DoubleValue AERO_DOWNFORCE = BUILDER
             .comment("Configurable aerodynamic downforce for testing purposes",
@@ -150,7 +150,7 @@ public class Config {
             .comment("Gamepad Controller 'Assist': velocity based steering lock",
                     "Max steer angle is scaled by 1/(1 + k*speed^2), so you",
                     "cant steer as much at higher speed and spin out")
-            .defineInRange("steerSpeedSensitivity", 0.0006, 0.0, 1.0);
+            .defineInRange("steerSpeedSensitivity", 0.003, 0.0, 1.0);
 
     public static final ModConfigSpec.DoubleValue STEER_INPUT_GAMMA = BUILDER
             .comment("Gamepad Controller 'Assist': Exponent applied to analog steering input",
