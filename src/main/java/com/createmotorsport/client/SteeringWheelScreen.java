@@ -162,6 +162,7 @@ public class SteeringWheelScreen extends AbstractContainerScreen<SteeringWheelMe
                 capturingControl = capturingControl == bindHit ? -1 : bindHit;
                 if (capturingControl >= 0) {
                     GamepadInput.beginCapture(); // baseline so held stick/trigger isn't grabbed instantly
+                    MouseInput.beginCapture();
                 }
             }
             return true;
@@ -175,6 +176,9 @@ public class SteeringWheelScreen extends AbstractContainerScreen<SteeringWheelMe
         // adds gamepad capture listening too
         if (capturingControl >= 0) {
             int code = GamepadInput.pollCapture();
+            if (code < 0) {
+                code = MouseInput.pollCapture();
+            }
             if (code >= 0) {
                 sendKey(capturingControl, code);
                 capturingControl = -1;
@@ -244,6 +248,9 @@ public class SteeringWheelScreen extends AbstractContainerScreen<SteeringWheelMe
         }
         if (GamepadCodes.isGamepadCode(keyCode)) {
             return GamepadCodes.name(keyCode);
+        }
+        if (MouseCodes.isMouseCode(keyCode)) {
+            return MouseCodes.name(keyCode);
         }
         String glfwName = GLFW.glfwGetKeyName(keyCode, 0);
         if (glfwName != null && !glfwName.isEmpty()) {

@@ -134,6 +134,12 @@ public class Config {
                     "0 = off. Default is 0.06")
             .defineInRange("aeroDownforce", 0.06, 0.0, 2.0);
 
+    public static final ModConfigSpec.DoubleValue BRAKE_STRENGTH = BUILDER
+            .comment("Peak braking torque per wheel at full brake, before grip limits it",
+                    "Braking needs to be improved overall, so this will be updated later",
+                    "Default 2000")
+            .defineInRange("brakeStrength", 2000.0, 100.0, 20000.0);
+
     static { BUILDER.pop(); }
 
     // =========================================================================
@@ -185,6 +191,28 @@ public class Config {
                     "Positive = anti-ackermann, so the outer wheel in a corner turns sharper than the inner,",
                     "Default 0.5.")
             .defineInRange("steeringAntiAckermann", 0.5, -1.0, 1.0);
+
+    public static final ModConfigSpec.BooleanValue ENABLE_MOUSE_INPUT = BUILDER
+            .comment("Enable the mouse to be used for inputs, like steering",
+                    "The camera will be locked while driving if this is true, so hold ALT (rebindable)",
+                    " to \"Free Look\", to move the camera while driving",
+                    "Default false")
+            .define("enableMouseInput", false);
+
+    public static final ModConfigSpec.BooleanValue MOUSE_ABSOLUTE_MODE = BUILDER
+            .comment("true = ABSOLUTE: mouse offset from center is the steer angle and holds",
+                    "false = VELOCITY: mouse movement speed",
+                    "Default true")
+            .define("mouseAbsoluteMode", true);
+
+    public static final ModConfigSpec.DoubleValue MOUSE_SENSITIVITY = BUILDER
+            .comment("Mouse steering sensitivity",
+                    "Default 1.0")
+            .defineInRange("mouseSensitivity", 1.0, 0.05, 10.0);
+
+    public static final ModConfigSpec.DoubleValue MOUSE_DEADZONE = BUILDER
+            .comment("Default 0.0")
+            .defineInRange("mouseDeadzone", 0.0, 0.0, 0.6);
 
     static { BUILDER.pop(); }
 

@@ -60,7 +60,7 @@ import java.util.Collection;
 import java.util.List;
 
 public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEntitySubLevelActor, GeoBlockEntity {
-    public static final double REST_LENGTH = 7.0 / 16.0;
+    public static final double REST_LENGTH = 3.5 / 16.0;
     public static final double MAX_TRAVEL = 0.25;
     public static final double MAX_DROOP_RENDER = 0.15;
     private static final double MAX_STEER_RAD = Math.toRadians(32.0);
@@ -633,7 +633,7 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
                 : 1.0;
 
         double wheelInertia = Math.max(0.5, 5.0 * radius * radius * radius * radius);
-        double brakeTorque = brake01 * 2000.0 * radius;
+        double brakeTorque = brake01 * Config.BRAKE_STRENGTH.getAsDouble() * radius;
 
         if (!grounded) {
             wheel.springLength = Mth.clamp(Mth.lerp(0.4, wheel.springLength, REST_LENGTH + MAX_DROOP_RENDER),

@@ -54,7 +54,7 @@ public class SuspensionModel extends GeoModel<SuspensionBlockEntity> {
         return ResourceLocation.fromNamespaceAndPath(CreateMotorsport.MODID, "animations/suspension.animation.json");
     }
     
-    private static final float SPIN_SIGN = -1.0F;
+    private static final float SPIN_SIGN = 1.0F;
 
 
     private static final float STEER_RACK_PX_PER_RAD = (float) (3.0 / Math.toRadians(30.0));
@@ -76,8 +76,10 @@ public class SuspensionModel extends GeoModel<SuspensionBlockEntity> {
 
     private void applySpin(float angleLeft, float angleRight) {
         spinZ("LeftWheel", angleLeft);
+        spinZ("bone", angleLeft);             // left wheel hub spins with tire
         spinZ("bone5", angleLeft);            // left outer half-shaft
         spinZ("RightWheel", angleRight);
+        spinZ("bone2", angleRight);           // right wheel hub spinny
         spinZ("ShaftRightRotation", angleRight); // right outer half-shaft
         spinZ("MiddleShaft", 0.5F * (angleLeft + angleRight));
         GeoBone prop = getAnimationProcessor().getBone("MainShaft");

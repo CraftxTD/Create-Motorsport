@@ -70,8 +70,14 @@ public final class SteeringInputHandler {
         int key = event.getKey();
         int action = event.getAction();
 
-        // esc to quit
         if (key == GLFW.GLFW_KEY_ESCAPE) {
+            return;
+        }
+        if (action == GLFW.GLFW_PRESS && MotorsportKeybinds.isExit(key, event.getScanCode())) {
+            stop();
+            return;
+        }
+        if (MotorsportKeybinds.isFreeLook(key, event.getScanCode())) {
             return;
         }
         // F1-F12 and slash key passthrough for POV, chat, and other keybinds
@@ -114,6 +120,11 @@ public final class SteeringInputHandler {
         }
 
         GamepadInput.poll();
+        MouseInput.poll();
+
+        // Lock the camera while driving with the mouse
+        boolean mouseLock = MouseInput.enabled() && hasMouseControl() && !MotorsportKeybinds.freeLookHeld();
+        MouseSteerCamera.update(mouseLock);
 
         int mask = 0;
         for (int i = 0; i < activeKeyCodes.length; i++) {
@@ -165,7 +176,22 @@ public final class SteeringInputHandler {
         if (code < 0) {
             return false;
         }
-        return GamepadCodes.isGamepadCode(code) ? GamepadInput.isDown(code) : HELD_KEYS.contains(code);
+        if (GamepadCodes.isGamepadCode(code)) {
+            return GamepadInput.isDown(code);
+        }
+        if (MouseCodes.isMouseCode(code)) {
+            return MouseInput.isDown(code);
+        }
+        return HELD_KEYS.contains(code);
+    }
+
+    private static boolean hasMouseControl() {
+        for (int code : activeKeyCodes) {
+            if (MouseCodes.isMouseCode(code)) {
+                return true;
+            }
+        }
+        return false;
     }
 
 
@@ -180,7 +206,7 @@ public final class SteeringInputHandler {
             return false;
         }
         int code = activeKeyCodes[idx];
-        return code >= 0 && GamepadCodes.isAnalogCode(code);
+        return code >= 0 && (GamepadCodes.isAnalogCode(code) || MouseCodes.isAnalog(code));
     }
 
     // analog strength, keypress or button is just 1
@@ -196,6 +222,9 @@ public final class SteeringInputHandler {
         if (GamepadCodes.isGamepadCode(code)) {
             return GamepadInput.analogMagnitude(code);
         }
+        if (MouseCodes.isMouseCode(code)) {
+            return MouseInput.analogMagnitude(code);
+        }
         return HELD_KEYS.contains(code) ? 1.0F : 0.0F;
     }
 
@@ -207,7 +236,7 @@ public final class SteeringInputHandler {
     }
 
     private static void showActionBar(LocalPlayer player, int mask) {
-        StringBuilder sb = new StringBuilder("Driving, [esc] to quit");
+        StringBuilder sb = new StringBuilder("Driving, [" + MotorsportKeybinds.exitKeyName().getString() + "] to quit");
         boolean first = true;
         for (SteeringControl control : SteeringWheelBlockEntity.CONTROLS) {
             if ((mask & (1 << control.ordinal())) != 0) {
@@ -247,6 +276,7 @@ public final class SteeringInputHandler {
         BlockPos pos = activePos;
         activePos = null;
         activeKeyCodes = new int[0];
+        MouseSteerCamera.reset();
         HELD_KEYS.clear();
         lastSentMask = -1;
         lastThrottle = -1;

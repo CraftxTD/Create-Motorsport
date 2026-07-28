@@ -231,7 +231,8 @@ public class CreateMotorsport {
         float designLoad = (float) (midpointKg * 9.81 / 4.0);
         return ITEMS.register(name, () -> new Item(new Item.Properties()
                 .stacksTo(16)
-                .component(OffroadDataComponents.TIRE, new TireLike(12.0f / 16.0f))
+                .component(OffroadDataComponents.TIRE, new TireLike(12.0f / 16.0f,
+                        net.minecraft.world.phys.Vec3.ZERO, net.minecraft.world.phys.Vec3.ZERO, (ResourceLocation) null))
                 .component(TIRE_DESIGN_LOAD, designLoad)));
     }
 
