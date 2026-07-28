@@ -45,6 +45,4 @@ public class CreateMotorsportClient {
         event.registerBlockEntityRenderer(CreateMotorsport.STEERING_WHEEL_BLOCK_ENTITY.get(), context -> new SteeringWheelRenderer());
         event.registerBlockEntityRenderer(CreateMotorsport.DOWN_FLAP_BLOCK_ENTITY.get(), context -> new DownFlapRenderer());
     }
-
-    private void registerVisuals(Entity)
 }

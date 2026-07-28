@@ -8,8 +8,7 @@ import net.minecraft.client.renderer.blockentity.BlockEntityRenderer;
 import net.minecraft.client.renderer.blockentity.BlockEntityRendererProvider;
 
 public class DownFlapRenderer extends SafeBlockEntityRenderer<DownFlapBlockEntity> {
-
-   public DownFlapRenderer(BlockEntityRendererProvider.Context context) {
+   public DownFlapRenderer() {
    }
 
     @Override
