@@ -1,0 +1,35 @@
+{
+	"format_version": "1.9.0",
+	"credit": "Made with Blockbench",
+	"texture_size": [32, 32],
+	"textures": {
+		"0": "block/wing",
+		"particle": "block/wing"
+	},
+	"elements": [
+		{
+			"name": "wing",
+			"from": [0, 8, 9],
+			"to": [16, 10, 16],
+			"rotation": {"angle": 0, "axis": "x", "origin": [8, 9, 16]},
+			"faces": {
+				"north": {"uv": [0, 7, 8, 8], "texture": "#0"},
+				"east": {"uv": [8, 0, 11.5, 1], "texture": "#0"},
+				"south": {"uv": [0, 8, 8, 9], "texture": "#0"},
+				"west": {"uv": [8, 1, 11.5, 2], "texture": "#0"},
+				"up": {"uv": [8, 3.5, 0, 0], "texture": "#0"},
+				"down": {"uv": [8, 3.5, 0, 7], "texture": "#0"}
+			}
+		}
+	],
+	"display": {},
+	"groups": [
+		{
+			"name": "wing",
+			"origin": [8, 9, 16],
+			"scope": 0,
+			"color": 0,
+			"children": [0]
+		}
+	]
+}
