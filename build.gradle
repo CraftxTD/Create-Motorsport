@@ -29,7 +29,15 @@ sourceSets.main.resources {
 repositories {
     maven { url = "https://maven.createmod.net" } // Create, Ponder, Flywheel
     maven { url = "https://maven.ithundxr.dev/snapshots" } // Registrate
-    maven { url = "https://cursemaven.com" } // Sable
+    exclusiveContent {
+        forRepository {
+            maven {
+                name = "Modrinth"
+                url = "https://api.modrinth.com/maven"
+            }
+        }
+        filter { includeGroup "maven.modrinth" }
+    }
     maven {
         name = "GeckoLib"
         url = "https://dl.cloudsmith.io/public/geckolib3/geckolib/maven/"
@@ -38,13 +46,12 @@ repositories {
         }
     }
     maven {
-    // Sable Companion
-    name = "RyanHCode Maven"
-    url = "https://maven.ryanhcode.dev/releases"
-    content {
-        includeGroup("dev.ryanhcode.sable-companion")
+        name = "RyanHCode Maven"
+        url = "https://maven.ryanhcode.dev/releases"
+        content {
+            includeGroup("dev.ryanhcode.sable-companion")
+        }
     }
-}
 }
 
 base {
@@ -143,16 +150,14 @@ dependencies {
     runtimeOnly("dev.engine-room.flywheel:flywheel-neoforge-${minecraft_version}:${flywheel_version}")
     implementation("com.tterrag.registrate:Registrate:${registrate_version}")
     implementation("software.bernie.geckolib:geckolib-neoforge-${minecraft_version}:${geckolib_version}")
-    compileOnly("curse.maven:sable-${sable_curse_project}:${sable_curse_file}")
-    localRuntime("curse.maven:sable-${sable_curse_project}:${sable_curse_file}")
-    compileOnly(files(
-            "libs/simulated-neoforge-1.21.1-1.3.0.jar",
-            "libs/aeronautics-neoforge-1.21.1-1.3.0.jar",
-            "libs/offroad-neoforge-1.21.1-1.3.0.jar"
-    ))
-    compileOnly(files("libs/create-aeronautics-bundled-1.21.1-1.3.0.jar"))
-    localRuntime(files("libs/create-aeronautics-bundled-1.21.1-1.3.0.jar"))
+    compileOnly("maven.modrinth:${sable_modrinth_id}:${sable_modrinth_version}")
+    localRuntime("maven.modrinth:${sable_modrinth_id}:${sable_modrinth_version}")
     compileOnly("dev.ryanhcode.sable-companion:sable-companion-common-${minecraft_version}:${sable_companion_version}")
+    localRuntime("maven.modrinth:${aeronautics_modrinth_id}:${aeronautics_modrinth_version}")
+    compileOnly(files(
+            "libs/offroad-neoforge-${minecraft_version}-${libs_compile_version}.jar",
+            "libs/simulated-neoforge-${minecraft_version}-${libs_compile_version}.jar"
+    ))
 
     // Example optional mod dependency with JEI
     // The JEI API is declared for compile time use, while the full JEI artifact is used at runtime
