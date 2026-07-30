@@ -8,7 +8,7 @@ import net.minecraft.resources.ResourceLocation;
 // Baked parts rendered by the block entity renderers (just the spinnable dashboard rim for now)
 public class MotorsportPartialModels {
     public static final PartialModel DASHBOARD_WHEEL = block("dashboard_wheel");
-    public static final PartialModel DOWNFLAP_SAIL = block("downflap_sail");
+    public static final PartialModel DOWNFLAP_WING = block("downflap/wing");
 
     private static PartialModel block(String path) {
         return PartialModel.of(ResourceLocation.fromNamespaceAndPath(CreateMotorsport.MODID, "block/" + path));

@@ -1,8 +1,12 @@
 {
   "variants": {
-    "facing=north": { "model": "createmotorsport:block/down_flap/block" },
-    "facing=east":  { "model": "createmotorsport:block/down_flap/block", "y": 90 },
-    "facing=south": { "model": "createmotorsport:block/down_flap/block", "y": 180 },
-    "facing=west":  { "model": "createmotorsport:block/down_flap/block", "y": 270 }
+    "facing=north,pillar=false": { "model": "createmotorsport:block/down_flap/block" },
+    "facing=east,pillar=false":  { "model": "createmotorsport:block/down_flap/block", "y": 90 },
+    "facing=south,pillar=false": { "model": "createmotorsport:block/down_flap/block", "y": 180 },
+    "facing=west,pillar=false":  { "model": "createmotorsport:block/down_flap/block", "y": 270 },
+    "facing=north,pillar=true": { "model": "createmotorsport:block/down_flap/pillar" },
+    "facing=east,pillar=true":  { "model": "createmotorsport:block/down_flap/pillar", "y": 90 },
+    "facing=south,pillar=true": { "model": "createmotorsport:block/down_flap/pillar", "y": 180 },
+    "facing=west,pillar=true":  { "model": "createmotorsport:block/down_flap/pillar", "y": 270 }
   }
 }

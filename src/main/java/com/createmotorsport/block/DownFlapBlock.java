@@ -6,13 +6,12 @@ import com.mojang.serialization.MapCodec;
 import com.simibubi.create.foundation.placement.PoleHelper;
 import net.minecraft.MethodsReturnNonnullByDefault;
 import net.minecraft.core.Direction;
-import net.minecraft.network.chat.Component;
 import com.simibubi.create.content.equipment.wrench.IWrenchable;
 import net.minecraft.core.BlockPos;
-import net.minecraft.server.level.ServerLevel;
-import net.minecraft.util.RandomSource;
+import net.minecraft.world.InteractionResult;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.context.BlockPlaceContext;
+import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
@@ -20,10 +19,11 @@ import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.HorizontalDirectionalBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.level.block.state.properties.BooleanProperty;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.ArrayList;
 import java.util.function.Predicate;
 
 import static net.minecraft.world.level.block.state.properties.BlockStateProperties.AXIS;
@@ -31,12 +31,12 @@ import static net.minecraft.world.level.block.state.properties.BlockStatePropert
 
 public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityBlock, IWrenchable {
    public static final MapCodec<DownFlapBlock> CODEC = simpleCodec(DownFlapBlock::new);
-   public static final BooleanProperty POWERED = BlockStateProperties.POWERED;
-   private static final Component CONTAINER_TITLE = Component.translatable("container.createmotorsport.down_flap");
+   public static final BooleanProperty PILLAR = BooleanProperty.create("pillar");
+    public int power = 0;
 
     public DownFlapBlock(Properties properties) {
         super(properties);
-        registerDefaultState(defaultBlockState().setValue(POWERED, false));
+        registerDefaultState(defaultBlockState().setValue(PILLAR, false));
     }
 
     @Override
@@ -51,34 +51,86 @@ public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityB
     }
 
     @Override
+    public InteractionResult onWrenched(BlockState state, UseOnContext context) {
+        Level level = context.getLevel();
+        BlockPos pos = context.getClickedPos();
+
+        BlockState newState = state.setValue(PILLAR, !state.getValue(PILLAR));
+        level.setBlockAndUpdate(pos, newState);
+
+        // TODO: add diff sound
+        if (level.getBlockState(pos) != state) {
+            IWrenchable.playRotateSound(level, pos);
+        }
+
+        return InteractionResult.SUCCESS;
+    }
+
+    @Override
     public void neighborChanged(BlockState state, Level level, BlockPos pos, Block block, BlockPos fromPos,
                                 boolean isMoving) {
         if (level.isClientSide) {
             return;
         }
 
+        DownFlapBlockEntity be = (DownFlapBlockEntity) level.getBlockEntity(pos);
+        if (be == null) { return; }
+        if (state.getValue(PILLAR)) {
+            power = level.getBestNeighborSignal(pos);
+        } else {
+            power = getNeighborFlapSignal(state, level, pos);
+        }
+        be.changeState(power);
 
         if (!level.getBlockTicks()
                 .willTickThisTick(pos, this))
             level.scheduleTick(pos, this, 1);
     }
 
-
-    @Override
-    public void tick(BlockState state, ServerLevel level, BlockPos pos, RandomSource r) {
-
+    // Overload for getting nearby flap signal
+    public int getSignal(BlockState state) {
+        if (!state.getValue(PILLAR)) {
+            return 0;
+        }
+        return power;
     }
 
-    @Override
-    public int getDirectSignal(BlockState blockState, BlockGetter blockAccess, BlockPos pos, Direction side) {
-        if (side != blockState.getValue(HORIZONTAL_FACING).getClockWise() || side != blockstate.getValue(HORIZONTAL_FACING).getCounterClockWise()) {
-            return getSignal(blockState, blockAccess, pos, side);
+    public int getNeighborFlapSignal(BlockState state, BlockGetter world, BlockPos pos) {
+        int i = 0;
+        ArrayList<Direction> sides = new ArrayList<Direction>();
+        sides.add(state.getValue(FACING).getClockWise());
+        sides.add(state.getValue(FACING).getCounterClockWise());
+
+        for (Direction direction : sides) {
+            int j = 0;
+            BlockState blockState = world.getBlockState(pos.relative(direction));
+            Block block = blockState.getBlock();
+            if (block instanceof DownFlapBlock flapBlock) {
+                j = flapBlock.getSignal(blockState);
+            }
+            if (j >= 15) {
+                return 15;
+            }
+
+            if (j > i) {
+                i = j;
+            }
         }
+
+        return i;
     }
 
     @Override
     public boolean canConnectRedstone(BlockState state, BlockGetter world, BlockPos pos, Direction side) {
-        return side != null;
+        if (state.getValue(PILLAR)) {
+            return side != null;
+        }
+        return false;
+    }
+
+    @Override
+    protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder) {
+        builder.add(HORIZONTAL_FACING, PILLAR);
     }
 
     @Nullable
@@ -86,6 +138,7 @@ public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityB
     public BlockState getStateForPlacement(BlockPlaceContext context) {
         return defaultBlockState().setValue(HORIZONTAL_FACING, context.getHorizontalDirection());
     }
+
 
     @MethodsReturnNonnullByDefault
     private static class PlacementHelper extends PoleHelper<Direction.Axis> {

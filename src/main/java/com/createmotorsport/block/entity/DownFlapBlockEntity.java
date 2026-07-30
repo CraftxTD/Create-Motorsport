@@ -4,18 +4,28 @@ import com.createmotorsport.CreateMotorsport;
 import com.simibubi.create.api.equipment.goggles.IHaveGoggleInformation;
 import com.simibubi.create.foundation.blockEntity.SmartBlockEntity;
 import com.simibubi.create.foundation.blockEntity.behaviour.BlockEntityBehaviour;
+import net.createmod.catnip.animation.LerpedFloat;
 import net.minecraft.core.BlockPos;
+import net.minecraft.util.Mth;
 import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.List;
 
 public class DownFlapBlockEntity extends SmartBlockEntity implements IHaveGoggleInformation {
+    int state = 0;
+    int lastChange;
+    LerpedFloat clientState;
+
     public DownFlapBlockEntity(BlockPos pos, BlockState state) {
         super(CreateMotorsport.DOWN_FLAP_BLOCK_ENTITY.get(), pos, state);
     }
 
     @Override
     public void addBehaviours(List<BlockEntityBehaviour> behaviours) {
+    }
+
+    public void changeState(int n) {
+        state = n;
     }
 
     @Override
