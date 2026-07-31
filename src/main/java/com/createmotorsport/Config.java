@@ -44,17 +44,22 @@ public class Config {
             .comment("Reverse gear ratio, default 3.2")
             .defineInRange("reverseRatio", 3.2, 0.1, 20.0);
 
+    public static final ModConfigSpec.DoubleValue DRIVETRAIN_TORQUE_SCALE = BUILDER
+            .comment("Converts real crank torque (Nm) into Sable's world scale,",
+                    "to account for Minecraft-scale car mass")
+            .defineInRange("drivetrainTorqueScale", 0.035, 0.0001, 10.0);
+
+    public static final ModConfigSpec.DoubleValue ENGINE_DRAG_PERCENT = BUILDER
+            .comment("Passive engine drag as percent of peak torque",
+                    "Default 0.15")
+            .defineInRange("engineDragPercent", 0.15, 0.01, 1.0);
+
     static { BUILDER.pop(); }
 
     // =======================================================================
     // PHYSICS
     // =======================================================================
     static { BUILDER.push("physics"); }
-
-    public static final ModConfigSpec.DoubleValue DRIVETRAIN_TORQUE_SCALE = BUILDER
-            .comment("Converts real crank torque (Nm) into Sable's world scale,",
-                    "to account for Minecraft-scale car mass")
-            .defineInRange("drivetrainTorqueScale", 0.03, 0.0001, 10.0);
 
     public static final ModConfigSpec.DoubleValue DIFFERENTIAL_ANTISLIP_TORQUE = BUILDER
             .comment("Limited-slip differential lock: 0 = open diff (inside wheel spins up freely), 200+ is like",
@@ -140,6 +145,41 @@ public class Config {
                     "Default 2000")
             .defineInRange("brakeStrength", 2000.0, 100.0, 20000.0);
 
+    public static final ModConfigSpec.DoubleValue TIRE_MASS = BUILDER
+            .comment("Configurable tire mass for testing purposes",
+                    "Default 20kg")
+            .defineInRange("tireMass", 20.0, 1, 100);
+
+    public static final ModConfigSpec.DoubleValue PACEJKA_CORNERING_STIFFNESS = BUILDER
+            .comment("Pacejka B/C/E done the same as Speed dreams for now:",
+                    "C = 2 - asin(RFactor)*2/PI, B = Ca/C, E = EFactor",
+                    "Default 30 is same as Speed Dreams. Old default was 19")
+            .defineInRange("pacejkaCorneringStiffness", 30.0, 1, 100);
+
+    public static final ModConfigSpec.DoubleValue PACEJKA_RFACTOR = BUILDER
+            .comment("Pacejka B/C/E done the same as Speed dreams for now:",
+                    "C = 2 - asin(RFactor)*2/PI, B = Ca/C, E = EFactor",
+                    "Default 0.8 is same as Speed Dreams, old default was 0.1564")
+            .defineInRange("pacejkaRFactor", 0.8, 0, 1);
+
+    public static final ModConfigSpec.DoubleValue PACEJKA_EFACTOR = BUILDER
+            .comment("Pacejka B/C/E done the same as Speed dreams for now:",
+                    "C = 2 - asin(RFactor)*2/PI, B = Ca/C, E = EFactor",
+                    "Default 30 is same as Speed Dreams, old default was 0.85")
+            .defineInRange("pacejkaEFactor", 0.7, 0, 1);
+
+    public static final ModConfigSpec.DoubleValue TIRE_GRIP_FRONT = BUILDER
+            .comment("Friction coefficient of FRONT racing slicks.",
+                    "Separated per axle as a simple way to adjust the",
+                    "oversteering balance. Default 1.6")
+            .defineInRange("tireGripFront", 1.6, 0.1, 2.5);
+
+    public static final ModConfigSpec.DoubleValue TIRE_GRIP_REAR = BUILDER
+            .comment("Friction coefficient of REAR racing slicks.",
+                    "Separated per axle as a simple way to adjust the",
+                    "oversteering balance. Default 1.4")
+            .defineInRange("tireGripRear", 1.4, 0.1, 2.5);
+
     static { BUILDER.pop(); }
 
     // =========================================================================
@@ -157,6 +197,12 @@ public class Config {
                     "Max steer angle is scaled by 1/(1 + k*speed^2), so you",
                     "cant steer as much at higher speed and spin out")
             .defineInRange("steerSpeedSensitivity", 0.003, 0.0, 1.0);
+
+    public static final ModConfigSpec.DoubleValue KEYPRESS_STEERING_RAMP = BUILDER
+            .comment("1 / RAMP / 20 seconds, is the formula for how long",
+                    "It takes a key press to be considered a full steering lock",
+                    "It also applies equally to the key release. Default is 0.30")
+            .defineInRange("keypressSteeringRamp", 0.30, 0.01, 1.0);
 
     public static final ModConfigSpec.DoubleValue STEER_INPUT_GAMMA = BUILDER
             .comment("Gamepad Controller 'Assist': Exponent applied to analog steering input",
@@ -192,6 +238,14 @@ public class Config {
                     "Default 0.5.")
             .defineInRange("steeringAntiAckermann", 0.5, -1.0, 1.0);
 
+    public static final ModConfigSpec.DoubleValue MAX_SUSPENSION_STEERING_ANGLE = BUILDER
+            .comment("Offroad cars use 32 degrees so I started with that, ",
+                    "but F1 cars are more like ~20-22 degrees supposedly,",
+                    "before considering the anti-ackermann adjustment",
+                    "They are specific to the track, however, so this might be too",
+                    "tight for Minecraft world. Default 22.0 for now")
+            .defineInRange("suspensionSteeringMaxAngle", 22.0, 1.0, 360.0);
+
     public static final ModConfigSpec.BooleanValue ENABLE_MOUSE_INPUT = BUILDER
             .comment("Enable the mouse to be used for inputs, like steering",
                     "The camera will be locked while driving if this is true, so hold ALT (rebindable)",
@@ -224,8 +278,8 @@ public class Config {
     public static final ModConfigSpec.DoubleValue STEERING_WHEEL_MAX_ANGLE = BUILDER
             .comment("How far the steering wheel rim turns at full lock, in degrees, each way",
                     "The wheel animates according to the scaled analog input",
-                    "This number is purely cosmetic, default 450 degrees")
-            .defineInRange("steeringWheelMaxAngle", 450.0, 30.0, 1080.0);
+                    "This number is purely cosmetic, default 200 degrees")
+            .defineInRange("steeringWheelMaxAngle", 200.0, 30.0, 1080.0);
 
     static { BUILDER.pop(); }
 

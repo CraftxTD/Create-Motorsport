@@ -33,7 +33,7 @@ public final class SteeringInputHandler {
 
     // Fake steering input for keypresses to apply a gamma too, so they can have an assist too
     private static float keySteer = 0.0f;
-    private static final float STEER_KEY_RAMP = 0.2f;
+    private static final float STEER_KEY_RAMP = (float) Config.KEYPRESS_STEERING_RAMP.getAsDouble();
 
     private SteeringInputHandler() {
     }

@@ -63,7 +63,7 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
     public static final double REST_LENGTH = 3.5 / 16.0;
     public static final double MAX_TRAVEL = 0.25;
     public static final double MAX_DROOP_RENDER = 0.15;
-    private static final double MAX_STEER_RAD = Math.toRadians(32.0);
+    private static final double MAX_STEER_RAD = Math.toRadians(Config.MAX_SUSPENSION_STEERING_ANGLE.getAsDouble());
     private static final double GROUND_MARGIN = 0.15;
     private static final int SYNC_INTERVAL_TICKS = 2;
 
@@ -597,10 +597,14 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         rightWheel.omega -= lambda / inertiaR;
     }
 
+    private static double wheelInertia(double radius) {
+        return Math.max(0.5, Config.TIRE_MASS.getAsDouble() * radius * radius); // totally messed this up before and wrote 4 radii
+    }
+
     private double wheelInertia(WheelSide side) {
         TireLike tire = getTire(side).get(OffroadDataComponents.TIRE);
         double radius = tire != null ? tire.radius() : REST_LENGTH;
-        return Math.max(0.5, 5.0 * radius * radius * radius * radius);
+        return wheelInertia(radius);
     }
 
     private boolean stepWheel(WheelSide side, Pose3d pose, MassData massData, double dt) {
@@ -632,7 +636,7 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
                 ? fudgeFriction(PhysicsBlockPropertyHelper.getFriction(level.getBlockState(cast.hitBlock())))
                 : 1.0;
 
-        double wheelInertia = Math.max(0.5, 5.0 * radius * radius * radius * radius);
+        double wheelInertia = wheelInertia(radius);
         double brakeTorque = brake01 * Config.BRAKE_STRENGTH.getAsDouble() * radius;
 
         if (!grounded) {
