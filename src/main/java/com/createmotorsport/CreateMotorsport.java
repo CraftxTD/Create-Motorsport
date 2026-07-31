@@ -165,7 +165,7 @@ public class CreateMotorsport {
             DOWN_FLAP_BLOCK
     );
     public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<DownFlapBlockEntity>> DOWN_FLAP_BLOCK_ENTITY =
-            BLOCK_ENTITY_TYPES.register("engine_block", () -> BlockEntityType.Builder.of(
+            BLOCK_ENTITY_TYPES.register("down_flap", () -> BlockEntityType.Builder.of(
                     DownFlapBlockEntity::new,
                     DOWN_FLAP_BLOCK.get()
             ).build(null));
