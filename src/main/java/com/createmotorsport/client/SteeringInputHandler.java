@@ -33,7 +33,6 @@ public final class SteeringInputHandler {
 
     // Fake steering input for keypresses to apply a gamma too, so they can have an assist too
     private static float keySteer = 0.0f;
-    private static final float STEER_KEY_RAMP = (float) Config.KEYPRESS_STEERING_RAMP.getAsDouble();
 
     private SteeringInputHandler() {
     }
@@ -140,6 +139,7 @@ public final class SteeringInputHandler {
         float steerGamma = (float) Config.STEER_INPUT_GAMMA.getAsDouble();
         float throttle = (float) Math.pow(strength(SteeringControl.THROTTLE), pedalGamma);
         float brake = (float) Math.pow(strength(SteeringControl.BRAKE), pedalGamma);
+        float steerKeyRamp = (float) Config.KEYPRESS_STEERING_RAMP.getAsDouble();
 
         float steerTarget = strength(SteeringControl.STEER_LEFT) - strength(SteeringControl.STEER_RIGHT);
         float steerInput;
@@ -148,9 +148,9 @@ public final class SteeringInputHandler {
             keySteer = steerTarget;
         } else {
             if (steerTarget > keySteer) {
-                keySteer = Math.min(steerTarget, keySteer + STEER_KEY_RAMP);
+                keySteer = Math.min(steerTarget, keySteer + steerKeyRamp);
             } else if (steerTarget < keySteer) {
-                keySteer = Math.max(steerTarget, keySteer - STEER_KEY_RAMP);
+                keySteer = Math.max(steerTarget, keySteer - steerKeyRamp);
             }
             steerInput = keySteer;
         }

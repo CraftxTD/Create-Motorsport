@@ -63,7 +63,6 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
     public static final double REST_LENGTH = 3.5 / 16.0;
     public static final double MAX_TRAVEL = 0.25;
     public static final double MAX_DROOP_RENDER = 0.15;
-    private static final double MAX_STEER_RAD = Math.toRadians(Config.MAX_SUSPENSION_STEERING_ANGLE.getAsDouble());
     private static final double GROUND_MARGIN = 0.15;
     private static final int SYNC_INTERVAL_TICKS = 2;
 
@@ -492,7 +491,7 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         brake01 = newBrake;
 
         lastChasingSteer = chasingSteer;
-        chasingSteer = Mth.lerp(0.4, chasingSteer, steerSignal / 15.0 * MAX_STEER_RAD * speedSteerLock());
+        chasingSteer = Mth.lerp(0.4, chasingSteer, steerSignal / 15.0 * (Math.toRadians(Config.MAX_SUSPENSION_STEERING_ANGLE.getAsDouble())) * speedSteerLock());
 
 
         // torque stops when engine stops ticking
@@ -535,7 +534,7 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
 
     private void clientTick() {
         lastChasingSteer = chasingSteer;
-        chasingSteer = Mth.lerp(0.4, chasingSteer, steerSignal / 15.0 * MAX_STEER_RAD * speedSteerLock());
+        chasingSteer = Mth.lerp(0.4, chasingSteer, steerSignal / 15.0 * Math.toRadians(Config.MAX_SUSPENSION_STEERING_ANGLE.getAsDouble()) * speedSteerLock());
         for (WheelSide side : WheelSide.values()) {
             WheelState w = getWheel(side);
             w.lastAngle = w.angle;
