@@ -76,9 +76,10 @@ public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityB
         DownFlapBlockEntity be = (DownFlapBlockEntity) level.getBlockEntity(pos);
         if (be == null) { return; }
         if (state.getValue(PILLAR)) {
-            power = level.getBestNeighborSignal(pos);
+            int temp = level.getBestNeighborSignal(pos);
+            power = (temp == -1) ? power : temp;
         } else {
-            power = getNeighborFlapSignal(state, level, pos);
+            power = getNeighborFlapSignal(state, level, pos, fromPos);
         }
         be.changeState(power);
 
@@ -95,7 +96,12 @@ public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityB
         return power;
     }
 
-    public int getNeighborFlapSignal(BlockState state, BlockGetter world, BlockPos pos) {
+    private int getNeighborFlapSignal(BlockState state, BlockGetter world, BlockPos pos, BlockPos fromPos) {
+        Block fromBlock = world.getBlockState(fromPos).getBlock();
+        if (!(fromBlock instanceof DownFlapBlock)) {
+            return -1;
+        }
+
         int i = 0;
         ArrayList<Direction> sides = new ArrayList<Direction>();
         sides.add(state.getValue(FACING).getClockWise());
@@ -107,6 +113,8 @@ public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityB
             Block block = blockState.getBlock();
             if (block instanceof DownFlapBlock flapBlock) {
                 j = flapBlock.getSignal(blockState);
+            } else {
+                continue;
             }
             if (j >= 15) {
                 return 15;
