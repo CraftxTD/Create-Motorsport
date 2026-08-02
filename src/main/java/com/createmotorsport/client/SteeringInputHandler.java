@@ -153,7 +153,7 @@ public final class SteeringInputHandler {
             steerInput = steerTarget;
             keySteer = steerTarget;
         } else {
-            float ramp = (float) Config.STEER_KEY_RAMP.getAsDouble();
+            float ramp = (float) Config.KEYPRESS_STEERING_RAMP.getAsDouble();
             if (steerTarget > keySteer) {
                 keySteer = Math.min(steerTarget, keySteer + ramp);
             } else if (steerTarget < keySteer) {
