@@ -120,7 +120,7 @@ public final class DrivetrainSim {
         double engineTorque;
         if (throttle < 0.02) {
             double brakeEngage = Mth.clamp(rpmFromWheels / idle, 0.0, 1.0);
-            engineTorque = -this.spec.engineBrakeTorque(this.rpm) * brakeEngage;
+            engineTorque = -this.spec.engineBrakeTorque(this.rpm, Config.ENGINE_BRAKE_FRACTION.getAsDouble()) * brakeEngage;
         } else {
             engineTorque = throttle * this.spec.torqueAt(this.rpm);
         }
@@ -128,7 +128,7 @@ public final class DrivetrainSim {
         engineTorque *= Config.ENGINE_PEAK_TORQUE.getAsDouble() / this.spec.peakTorque();
 
         // Transmitted torque scales with engagement
-        double wheelTorque = engineTorque * transfer * ratio * this.spec.drivelineEfficiency();
+        double wheelTorque = engineTorque * transfer * ratio * Config.DRIVELINE_EFFICIENCY.getAsDouble();
         return record(engineTorque, ratio, wheelTorque, !slipping);
     }
 

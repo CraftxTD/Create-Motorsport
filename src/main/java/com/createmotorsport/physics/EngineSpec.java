@@ -1,6 +1,5 @@
 package com.createmotorsport.physics;
 
-import com.createmotorsport.Config;
 import net.minecraft.util.Mth;
 
 /**
@@ -56,7 +55,7 @@ public record EngineSpec(
 
 
     // Passive drag form the engine when throttle is closed, in newton-meters (Nm)
-    public double engineBrakeTorque(double rpm) {
-        return Config.ENGINE_DRAG_PERCENT.getAsDouble() * this.peakTorque * Mth.clamp(rpm / this.redlineRpm, 0.0, 1.1);
+    public double engineBrakeTorque(double rpm, double fraction) {
+        return fraction * this.peakTorque * Mth.clamp(rpm / this.redlineRpm, 0.0, 1.1);
     }
 }

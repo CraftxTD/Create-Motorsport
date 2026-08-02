@@ -78,12 +78,13 @@ public class SuspensionRenderer extends GeoBlockRenderer<SuspensionBlockEntity> 
         float dropOffset = (1.0F - deploy) * DROP_HEIGHT; // starts high, eases to 0
         float spin = be.getLerpedAngle(side, partialTicks);
         float steer = be.getLerpedSteer(side, partialTicks);
+        float breakaway = (float) be.breakawayDrop(); // for tire breakaway from suspension with the lift heigh
 
         // flip one tire so its not inside out
         boolean flip = side == WheelSide.LEFT;
 
         ms.pushPose();
-        ms.translate(hub.x, hub.y + raiseOffset + dropOffset, hub.z);
+        ms.translate(hub.x, hub.y + raiseOffset + dropOffset - breakaway, hub.z);
         ms.mulPose(Axis.YP.rotation(steer * STEER_SIGN)); // steering yaw
         if (flip) {
             ms.mulPose(Axis.YP.rotation((float) Math.PI));

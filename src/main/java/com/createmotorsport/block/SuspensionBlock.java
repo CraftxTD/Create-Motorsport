@@ -38,7 +38,8 @@ import org.jetbrains.annotations.Nullable;
 
 public class SuspensionBlock extends HorizontalDirectionalBlock implements EntityBlock {
     public static final MapCodec<SuspensionBlock> CODEC = simpleCodec(SuspensionBlock::new);
-    private static final VoxelShape SHAPE = Block.box(0.0, 2.0, 0.0, 16.0, 14.0, 16.0);
+    // Making it a full block for now because the underside chassis kept getting caught on the ridge between the suspension and the next block
+    private static final VoxelShape SHAPE = Shapes.block();
     private static final Component STEERING_TITLE = Component.translatable("container.createmotorsport.suspension");
 
     public SuspensionBlock(BlockBehaviour.Properties properties) {

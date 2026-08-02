@@ -33,6 +33,9 @@ public final class SteeringInputHandler {
 
     // Fake steering input for keypresses to apply a gamma too, so they can have an assist too
     private static float keySteer = 0.0f;
+    // Fake pedal input also
+    private static float keyThrottle = 0.0f;
+    private static float keyBrake = 0.0f;
 
     private SteeringInputHandler() {
     }
@@ -55,6 +58,8 @@ public final class SteeringInputHandler {
         lastBrake = -1;
         lastSteer = -999;
         keySteer = 0.0f;
+        keyThrottle = 0.0f;
+        keyBrake = 0.0f;
         PacketDistributor.sendToServer(new SetDrivingPacket(activePos, true));
     }
 
@@ -133,13 +138,14 @@ public final class SteeringInputHandler {
         }
 
 
-        // I tried to do a fake steering input for key presses, so that there is something for a gamma to apply to
-        // so far it seems like its working well enough
+        // Keypress assists create fake inputs so the input isnt instantaneous and its something for the Gamma to work on
         float pedalGamma = (float) Config.PEDAL_INPUT_GAMMA.getAsDouble();
         float steerGamma = (float) Config.STEER_INPUT_GAMMA.getAsDouble();
-        float throttle = (float) Math.pow(strength(SteeringControl.THROTTLE), pedalGamma);
-        float brake = (float) Math.pow(strength(SteeringControl.BRAKE), pedalGamma);
-        float steerKeyRamp = (float) Config.KEYPRESS_STEERING_RAMP.getAsDouble();
+        float pedalRamp = (float) Config.PEDAL_KEY_RAMP.getAsDouble();
+        float throttleInput = pedalInput(SteeringControl.THROTTLE, pedalRamp, true);
+        float brakeInput = pedalInput(SteeringControl.BRAKE, pedalRamp, false);
+        float throttle = (float) Math.pow(throttleInput, pedalGamma);
+        float brake = (float) Math.pow(brakeInput, pedalGamma);
 
         float steerTarget = strength(SteeringControl.STEER_LEFT) - strength(SteeringControl.STEER_RIGHT);
         float steerInput;
@@ -147,10 +153,11 @@ public final class SteeringInputHandler {
             steerInput = steerTarget;
             keySteer = steerTarget;
         } else {
+            float ramp = (float) Config.STEER_KEY_RAMP.getAsDouble();
             if (steerTarget > keySteer) {
-                keySteer = Math.min(steerTarget, keySteer + steerKeyRamp);
+                keySteer = Math.min(steerTarget, keySteer + ramp);
             } else if (steerTarget < keySteer) {
-                keySteer = Math.max(steerTarget, keySteer - steerKeyRamp);
+                keySteer = Math.max(steerTarget, keySteer - ramp);
             }
             steerInput = keySteer;
         }
@@ -207,6 +214,22 @@ public final class SteeringInputHandler {
         }
         int code = activeKeyCodes[idx];
         return code >= 0 && (GamepadCodes.isAnalogCode(code) || MouseCodes.isAnalog(code));
+    }
+
+    private static float pedalInput(SteeringControl control, float ramp, boolean throttle) {
+        float target = strength(control);
+        if (isAnalogControl(control)) {
+            if (throttle) keyThrottle = target; else keyBrake = target;
+            return target;
+        }
+        float current = throttle ? keyThrottle : keyBrake;
+        if (target > current) {
+            current = Math.min(target, current + ramp);
+        } else if (target < current) {
+            current = Math.max(target, current - ramp);
+        }
+        if (throttle) keyThrottle = current; else keyBrake = current;
+        return current;
     }
 
     // analog strength, keypress or button is just 1
@@ -283,6 +306,8 @@ public final class SteeringInputHandler {
         lastBrake = -1;
         lastSteer = -999;
         keySteer = 0.0f;
+        keyThrottle = 0.0f;
+        keyBrake = 0.0f;
         if (pos != null && Minecraft.getInstance().player != null) {
             PacketDistributor.sendToServer(new SteeringInputPacket(pos, 0, 0, 0, 0));
             PacketDistributor.sendToServer(new SetDrivingPacket(pos, false));

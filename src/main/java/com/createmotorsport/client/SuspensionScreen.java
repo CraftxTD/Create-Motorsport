@@ -3,6 +3,7 @@ package com.createmotorsport.client;
 import com.createmotorsport.block.entity.SuspensionBlockEntity;
 import com.createmotorsport.block.entity.SuspensionBlockEntity.SteerChannel;
 import com.createmotorsport.menu.SuspensionMenu;
+import com.createmotorsport.network.AdjustLiftPacket;
 import com.createmotorsport.network.ToggleAxleEndPacket;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
@@ -33,6 +34,14 @@ public class SuspensionScreen extends AbstractContainerScreen<SuspensionMenu> {
     private static final int BTN_H = 14;
     private static final int BTN_X = 92;
     private static final int BTN_Y = 16;
+
+    // lift height
+    private static final int LIFT_Y = 34;
+    private static final int LIFT_BTN_W = 14;
+    private static final int LIFT_BTN_H = 14;
+    private static final int LIFT_MINUS_X = 92;
+    private static final int LIFT_PLUS_X = BTN_X + BTN_W - LIFT_BTN_W;
+    private static final int LIFT_BTN_COLOR = 0xFF3A3A3A;
 
     public SuspensionScreen(SuspensionMenu menu, Inventory playerInventory, Component title) {
         super(menu, playerInventory, title);
@@ -78,6 +87,17 @@ public class SuspensionScreen extends AbstractContainerScreen<SuspensionMenu> {
         String label = front ? "Front Axle" : "Rear Axle";
         g.drawString(font, label, bx + (BTN_W - font.width(label)) / 2, by + 3, 0xFFFFFFFF, false);
 
+        // lift height
+        int ly = t + LIFT_Y;
+        g.drawString(font, "Ride Lift", l + 12, ly + 3, 0xFFAAAAAA, false);
+        drawLiftButton(g, l + LIFT_MINUS_X, ly, "-");
+        drawLiftButton(g, l + LIFT_PLUS_X, ly, "+");
+        String liftLabel = getLiftSteps() + "/" + SuspensionBlockEntity.LIFT_STEPS;
+        int valueLeft = l + LIFT_MINUS_X + LIFT_BTN_W;
+        int valueRight = l + LIFT_PLUS_X;
+        g.drawString(font, liftLabel, valueLeft + (valueRight - valueLeft - font.width(liftLabel)) / 2, ly + 3,
+                0xFFFFFFFF, false);
+
         int invY = t + SuspensionMenu.INV_Y;
         g.fill(l + SuspensionMenu.INV_X - 4, invY - 2, l + w - 8, t + h - 4, 0xFF222222);
     }
@@ -91,6 +111,22 @@ public class SuspensionScreen extends AbstractContainerScreen<SuspensionMenu> {
         return false;
     }
 
+    private int getLiftSteps() {
+        BlockPos pos = menu.getSuspensionPos();
+        if (pos != null && Minecraft.getInstance().level != null
+                && Minecraft.getInstance().level.getBlockEntity(pos) instanceof SuspensionBlockEntity be) {
+            return be.getLiftSteps();
+        }
+        return 0;
+    }
+
+    private void drawLiftButton(GuiGraphics g, int x, int y, String sign) {
+        g.fill(x, y, x + LIFT_BTN_W, y + LIFT_BTN_H, LIFT_BTN_COLOR);
+        g.fill(x, y, x + LIFT_BTN_W, y + 1, BORDER);
+        g.fill(x, y + LIFT_BTN_H - 1, x + LIFT_BTN_W, y + LIFT_BTN_H, BORDER);
+        g.drawString(font, sign, x + (LIFT_BTN_W - font.width(sign)) / 2, y + 3, 0xFFFFFFFF, false);
+    }
+
     @Override
     public boolean mouseClicked(double mx, double my, int button) {
         int bx = leftPos + BTN_X;
@@ -101,6 +137,22 @@ public class SuspensionScreen extends AbstractContainerScreen<SuspensionMenu> {
                 PacketDistributor.sendToServer(new ToggleAxleEndPacket(pos));
             }
             return true;
+        }
+        int ly = topPos + LIFT_Y;
+        if (button == 0 && my >= ly && my < ly + LIFT_BTN_H) {
+            int delta = 0;
+            if (mx >= leftPos + LIFT_MINUS_X && mx < leftPos + LIFT_MINUS_X + LIFT_BTN_W) {
+                delta = -1;
+            } else if (mx >= leftPos + LIFT_PLUS_X && mx < leftPos + LIFT_PLUS_X + LIFT_BTN_W) {
+                delta = 1;
+            }
+            if (delta != 0) {
+                BlockPos pos = menu.getSuspensionPos();
+                if (pos != null) {
+                    PacketDistributor.sendToServer(new AdjustLiftPacket(pos, delta));
+                }
+                return true;
+            }
         }
         return super.mouseClicked(mx, my, button);
     }

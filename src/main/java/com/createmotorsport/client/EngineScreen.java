@@ -3,12 +3,16 @@ package com.createmotorsport.client;
 import com.createmotorsport.block.entity.EngineBlockEntity;
 import com.createmotorsport.block.entity.EngineBlockEntity.ControlChannel;
 import com.createmotorsport.menu.EngineMenu;
+import com.createmotorsport.network.ToggleEngineDirectionPacket;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.Minecraft;
+import net.minecraft.core.BlockPos;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Inventory;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.api.distmarker.OnlyIn;
+import net.neoforged.neoforge.network.PacketDistributor;
 
 // Temporary screen in the style I am used to making gui's, based on RedstoneLinksScreen from Univeral Keyboard
 @OnlyIn(Dist.CLIENT)
@@ -20,6 +24,14 @@ public class EngineScreen extends AbstractContainerScreen<EngineMenu> {
     private static final int ROW = 0xFF2A2A2A;
     private static final int SLOT_EDGE = 0xFF3D3D3D;
     private static final int SLOT_BASE = 0xFF1F1F1F;
+
+    // toggle button for the crank rotation direction (+1 / -1)
+    private static final int DIR_BTN_W = 68;
+    private static final int DIR_BTN_H = 14;
+    private static final int DIR_BTN_X = 100;
+    private static final int DIR_BTN_Y = 18;
+    private static final int DIR_FORWARD = 0xFF35506A;
+    private static final int DIR_REVERSE = 0xFF6A3535;
 
     public EngineScreen(EngineMenu menu, Inventory playerInventory, Component title) {
         super(menu, playerInventory, title);
@@ -62,9 +74,42 @@ public class EngineScreen extends AbstractContainerScreen<EngineMenu> {
             drawSlot(g, l + EngineMenu.CHANNEL_SLOT_B_X, y, FREQ_B_TINT);
         }
 
+        // Rotation direction toggle for engine crank
+        int dir = getRotationDirection();
+        int bx = l + DIR_BTN_X;
+        int by = t + DIR_BTN_Y;
+        g.fill(bx, by, bx + DIR_BTN_W, by + DIR_BTN_H, dir > 0 ? DIR_FORWARD : DIR_REVERSE);
+        g.fill(bx, by, bx + DIR_BTN_W, by + 1, BORDER);
+        g.fill(bx, by + DIR_BTN_H - 1, bx + DIR_BTN_W, by + DIR_BTN_H, BORDER);
+        String dirLabel = "Rotation: " + (dir > 0 ? "1" : "-1");
+        g.drawString(font, dirLabel, bx + (DIR_BTN_W - font.width(dirLabel)) / 2, by + 3, 0xFFFFFFFF, false);
+
         // Player inventory backing
         int invY = t + EngineMenu.INV_Y;
         g.fill(l + EngineMenu.INV_X - 4, invY - 2, l + w - 8, t + h - 4, 0xFF222222);
+    }
+
+    private int getRotationDirection() {
+        BlockPos pos = menu.getEnginePos();
+        if (pos != null && Minecraft.getInstance().level != null
+                && Minecraft.getInstance().level.getBlockEntity(pos) instanceof EngineBlockEntity engine) {
+            return engine.getRotationDirection();
+        }
+        return 1;
+    }
+
+    @Override
+    public boolean mouseClicked(double mx, double my, int button) {
+        int bx = leftPos + DIR_BTN_X;
+        int by = topPos + DIR_BTN_Y;
+        if (button == 0 && mx >= bx && mx < bx + DIR_BTN_W && my >= by && my < by + DIR_BTN_H) {
+            BlockPos pos = menu.getEnginePos();
+            if (pos != null) {
+                PacketDistributor.sendToServer(new ToggleEngineDirectionPacket(pos));
+            }
+            return true;
+        }
+        return super.mouseClicked(mx, my, button);
     }
 
     private void drawSlot(GuiGraphics g, int x, int y, int tint) {

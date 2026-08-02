@@ -49,10 +49,17 @@ public class Config {
                     "to account for Minecraft-scale car mass")
             .defineInRange("drivetrainTorqueScale", 0.035, 0.0001, 10.0);
 
-    public static final ModConfigSpec.DoubleValue ENGINE_DRAG_PERCENT = BUILDER
-            .comment("Passive engine drag as percent of peak torque",
+    public static final ModConfigSpec.DoubleValue DRIVELINE_EFFICIENCY = BUILDER
+            .comment("Driveline efficiency %",
+                    "Real cars are 0.85-0.95",
+                    "Default 0.93")
+            .defineInRange("drivelineEfficiency", 0.93, 0.5, 1.0);
+
+    public static final ModConfigSpec.DoubleValue ENGINE_BRAKE_FRACTION = BUILDER
+            .comment("Passive Engine Drag as percent of peak torque",
                     "Default 0.15")
-            .defineInRange("engineDragPercent", 0.15, 0.01, 1.0);
+            .defineInRange("engineBrakeFraction", 0.15, 0.0, 0.3);
+
 
     static { BUILDER.pop(); }
 
@@ -66,6 +73,19 @@ public class Config {
                     "a near-locked spool (both wheels forced to the same speed); higher = more traction off the",
                     "line but more understeer; default is 200")
             .defineInRange("differentialAntiSlipTorque", 200.0, 0.0, 100000.0);
+
+    public static final ModConfigSpec.DoubleValue CENTER_DIFF_FRONT_BIAS = BUILDER
+            .comment("AWD only; the center differential's front torque share",
+                    "0.5 = even split; lower is rear biased, so more oversteer",
+                    "Default 0.5")
+            .defineInRange("centerDiffFrontBias", 0.5, 0.0, 1.0);
+
+    public static final ModConfigSpec.DoubleValue CENTER_DIFF_LOCK = BUILDER
+            .comment("AWD only; 0 = open center diff",
+                    "0.5 = up to half the torque can be transferred",
+                    "1.0 = locked center",
+                    "Default 0.5")
+            .defineInRange("centerDiffLock", 0.5, 0.0, 1.0);
 
     public static final ModConfigSpec.DoubleValue SIM_SLIP_LIMIT = BUILDER
             .comment("SIM tire model only; caps how far up the slip curve the slip is allowed to travel, so the curve",
@@ -93,10 +113,17 @@ public class Config {
             .defineInRange("lateralGripFraction", 0.5, 0.05, 1.0);
 
     public static final ModConfigSpec.DoubleValue SIM_LOWSPEED_BLEND_MS = BUILDER
-            .comment("SIM tire model only; below this speed (m/s) the saturated slip-angle force would jitter or spin a",
+            .comment("Tire model 2 & 3 only; below this speed (m/s) the saturated slip-angle force would jitter or spin a",
                     "car and never stop, so lateral grip blends back to the simple arcade cancellation",
+                    "The Fiala model will work better with a lower blend, but turn it up to 2m/s if using model 2",
                     "Default 2.0 m/s (~7 km/h)")
-            .defineInRange("simLowSpeedBlend", 2.0, 0.5, 15.0);
+            .defineInRange("simLowSpeedBlend", 1.0, 0.0, 15.0);
+
+    public static final ModConfigSpec.DoubleValue SIM_LOWSPEED_REF = BUILDER
+            .comment("Tire model 3 only; floor (in m/s) on the speed that is used as the denominator when calculating slip",
+                    "ratio and slip angle, so they stay finite as the car slows. Raising this value helps with twitchy behavior",
+                    "near a stop at the cost of less responsive grip low this speed. Default 1.0")
+            .defineInRange("simLowSpeedRef", 1.0, 0.1, 5.0);
 
     public static final ModConfigSpec.DoubleValue ROLLING_RESISTANCE_COEF = BUILDER
             .comment("Rolling resistance as a fraction of the tire's vertical load. Slows a coasting car and",
@@ -126,30 +153,43 @@ public class Config {
                     "drag force roughly 7x too strong, making the default 0.14 until we improve the aerodynamics modeling")
             .defineInRange("sableDragScale", 0.14, 0.0, 1.0);
 
-    public static final ModConfigSpec.BooleanValue SIM_TIRE_MODEL = BUILDER
-            .comment("false = ARCADE tire model, like driving on rails",
-                    "true = SIM tire model: more realistic, lets you spin out of control",
-                    "Default is ARCADE, so false")
-            .define("simTireModel", true);
+    public static final ModConfigSpec.IntValue TIRE_MODEL = BUILDER
+            .comment("Which tire model to use:",
+                    "1 = Arcade, 2 = Pacejka, 3 = Fiala")
+            .defineInRange("tireModel", 2, 1, 3);
 
-    public static final ModConfigSpec.DoubleValue AERO_DOWNFORCE = BUILDER
-            .comment("Configurable aerodynamic downforce for testing purposes",
-                    "(load = this * speed_m/s^2)",
-                    "Will be incorporated into spoilers/wings/diffusers later",
-                    "0 = off. Default is 0.06")
-            .defineInRange("aeroDownforce", 0.06, 0.0, 2.0);
+    // ---- Fiala brush tire model (SIM mode only) -------------------------------------------------
+    public static final ModConfigSpec.DoubleValue FIALA_CSLIP = BUILDER
+            .comment("Fiala tire model only; Fiala longitudinal slip stiffness (N per unit slip ratio)",
+                    "Higher = grip peak at a lower slip %",
+                    "This is calibrated from a specific tire I found in Project Chrono, where ",
+                    "193929 N is scaled down to a 65kpg car. Will handle scale better later")
+            .defineInRange("fialaSlipStiffness", 5000.0, 100.0, 1000000.0);
 
-    public static final ModConfigSpec.DoubleValue BRAKE_STRENGTH = BUILDER
-            .comment("Peak braking torque per wheel at full brake, before grip limits it",
-                    "Braking needs to be improved overall, so this will be updated later",
-                    "Default 2000")
-            .defineInRange("brakeStrength", 2000.0, 100.0, 20000.0);
+    public static final ModConfigSpec.DoubleValue FIALA_CALPHA = BUILDER
+            .comment("Fiala tire model only; Fiala cornering stiffness (N per radian of slip angle)",
+                    "Higher breaks away more suddenly.",
+                    "Calibrated from a Chrono example to ~65kpg again")
+            .defineInRange("fialaCorneringStiffness", 1600.0, 100.0, 2000000.0);
 
-    public static final ModConfigSpec.DoubleValue TIRE_MASS = BUILDER
-            .comment("Configurable tire mass for testing purposes",
-                    "Default 20kg")
-            .defineInRange("tireMass", 20.0, 1, 100);
+    public static final ModConfigSpec.DoubleValue FIALA_MU_MAX = BUILDER
+            .comment("Fiala tire model only; peak friction coefficient;",
+                    "Scales by surface friction, load sensitivity, and the tier grip value",
+                    "Default 1.5")
+            .defineInRange("fialaMuMax", 1.5, 0.1, 3.0);
 
+    public static final ModConfigSpec.DoubleValue FIALA_MU_MIN = BUILDER
+            .comment("Fiala tire model only; Fiala sliding friction coefficient",
+                    "Default 0.9")
+            .defineInRange("fialaMuMin", 0.9, 0.1, 3.0);
+
+    public static final ModConfigSpec.DoubleValue FIALA_RELAX_LENGTH = BUILDER
+            .comment("Fiala tire model only; tire relaxation length (m) which is the distance the tire must roll for",
+                    "its slip force to build up, instead of responding instantly. Car wobbles if this is too low",
+                    "Default 2.0")
+            .defineInRange("fialaRelaxLength", 2.0, 0.05, 5.0);
+
+    // ---- Pacejka slip curve shape (SIM tire model 2 only) ---------------------------------------
     public static final ModConfigSpec.DoubleValue PACEJKA_CORNERING_STIFFNESS = BUILDER
             .comment("Pacejka B/C/E done the same as Speed dreams for now:",
                     "C = 2 - asin(RFactor)*2/PI, B = Ca/C, E = EFactor",
@@ -168,6 +208,7 @@ public class Config {
                     "Default 30 is same as Speed Dreams, old default was 0.85")
             .defineInRange("pacejkaEFactor", 0.7, 0, 1);
 
+    // ---- Tire grip per axle (all tire models) ---------------------------------------------------
     public static final ModConfigSpec.DoubleValue TIRE_GRIP_FRONT = BUILDER
             .comment("Friction coefficient of FRONT racing slicks.",
                     "Separated per axle as a simple way to adjust the",
@@ -179,6 +220,80 @@ public class Config {
                     "Separated per axle as a simple way to adjust the",
                     "oversteering balance. Default 1.4")
             .defineInRange("tireGripRear", 1.4, 0.1, 2.5);
+
+    // ---- Tire temperature (Speed Dreams style; applies to all tire models) ----------------------
+    public static final ModConfigSpec.BooleanValue TIRE_THERMAL_MODEL = BUILDER
+            .comment("Use thermal modeling for tires? Default is false for now")
+            .define("tireThermalModel", false);
+
+    public static final ModConfigSpec.DoubleValue TIRE_OPT_TEMP = BUILDER
+            .comment("Thermal model only; optimal tire temperature in Celsius for grip",
+                    "Default 90")
+            .defineInRange("tireOptTemp", 70.0, 20.0, 150.0);
+
+    public static final ModConfigSpec.DoubleValue TIRE_AMBIENT_TEMP = BUILDER
+            .comment("Thermal model only; ambient temperature in Celsius",
+                    "Default 30")
+            .defineInRange("tireAmbientTemp", 30.0, -40.0, 60.0);
+
+    public static final ModConfigSpec.DoubleValue COLD_MU_FACTOR = BUILDER
+            .comment("Thermal model only; grip fraction when the tire is ambient temp",
+                    "0.6 = 60% grip when cold, default 0.6")
+            .defineInRange("coldGripFactor", 0.6, 0.05, 1.0);
+
+    public static final ModConfigSpec.DoubleValue TIRE_HEATING_RATE = BUILDER
+            .comment("Thermal model only; how fast the slip energy heats the tire (deg C per joule of friction work)",
+                    "Higher = tires warm up faster; needs tuning to our force scale, for now default 0.005")
+            .defineInRange("tireHeatingRate", 0.005, 0.0, 5.0);
+
+    public static final ModConfigSpec.DoubleValue TIRE_COOLING_RATE = BUILDER
+            .comment("Thermal model only; how fast the tire cools toward ambient (per second, scaled up with",
+                    "speed for airflow). Higher = harder to keep warm (cools faster). Default 0.02")
+            .defineInRange("tireCoolingRate", 0.02, 0.0, 5.0);
+
+    public static final ModConfigSpec.DoubleValue AERO_DOWNFORCE = BUILDER
+            .comment("Configurable aerodynamic downforce for testing purposes",
+                    "(load = this * speed_m/s^2)",
+                    "Will be incorporated into spoilers/wings/diffusers later",
+                    "0 = off. Default is 0.06")
+            .defineInRange("aeroDownforce", 0.06, 0.0, 2.0);
+
+    public static final ModConfigSpec.DoubleValue BRAKE_STRENGTH = BUILDER
+            .comment("Peak braking torque per wheel at full brake, before grip limits it",
+                    "Braking needs to be improved overall, so this will be updated later",
+                    "Default 2000")
+            .defineInRange("brakeStrength", 2000.0, 100.0, 20000.0);
+
+    public static final ModConfigSpec.BooleanValue ABS_ENABLED = BUILDER
+            .comment("Enable Anti-lock braking",
+                    "Default true")
+            .define("absEnabled", true);
+
+    public static final ModConfigSpec.DoubleValue ABS_SLIP_THRESHOLD = BUILDER
+            .comment("ABS only; braking slip ratio where the ABS starts releasing brake pressure.",
+                    "Peak grip on the slip curve sits around 0.1-0.2, so keep it near here,",
+                    "but if you want to change it, higher = allows more slip",
+                    "Default 0.15")
+            .defineInRange("absSlipThreshold", 0.15, 0.05, 0.5);
+
+    public static final ModConfigSpec.DoubleValue ABS_MIN_SPEED = BUILDER
+            .comment("ABS shuts off under this speed (m/s) so the car can stop",
+                    "Default 1.5")
+            .defineInRange("absMinSpeed", 1.5, 0.0, 10.0);
+
+    public static final ModConfigSpec.DoubleValue WHEEL_MASS = BUILDER
+            .comment("Configurable tire mass for testing purposes",
+                    "Default 20kg")
+            .defineInRange("tireMass", 20.0, 1, 100);
+
+
+    public static final ModConfigSpec.DoubleValue STEERING_MAX_DEGREES = BUILDER
+            .comment("Offroad cars use 32 degrees so I started with that, ",
+                    "but F1 cars are more like ~20-22 degrees supposedly,",
+                    "before considering the anti-ackermann adjustment",
+                    "They are specific to the track, however, so this might be too",
+                    "tight for Minecraft world. Default 26.0 for now")
+            .defineInRange("suspensionSteeringMaxAngle", 26.0, 1.0, 360.0);
 
     static { BUILDER.pop(); }
 
@@ -209,6 +324,12 @@ public class Config {
                     "1.0 = linear; softens small stick movements near centre for finer control")
             .defineInRange("steerInputGamma", 1.8, 1.0, 4.0);
 
+    public static final ModConfigSpec.DoubleValue PEDAL_KEY_RAMP = BUILDER
+            .comment("1 / RAMP / 20 seconds, is the formula for how long",
+                    "It takes a key press to be considered a full pedal input",
+                    "It also applies equally to the key release. Default is 0.30")
+            .defineInRange("pedalKeyRamp", 0.3, 0.01, 1.0);
+
     public static final ModConfigSpec.DoubleValue PEDAL_INPUT_GAMMA = BUILDER
             .comment("Exponent applied to analog throttle and brake (trigger) input. 1.0 = linear;",
                     "~1.8 and the first half of the signal only asks for ~30% power, easier to feather the throttle")
@@ -237,14 +358,6 @@ public class Config {
                     "Positive = anti-ackermann, so the outer wheel in a corner turns sharper than the inner,",
                     "Default 0.5.")
             .defineInRange("steeringAntiAckermann", 0.5, -1.0, 1.0);
-
-    public static final ModConfigSpec.DoubleValue MAX_SUSPENSION_STEERING_ANGLE = BUILDER
-            .comment("Offroad cars use 32 degrees so I started with that, ",
-                    "but F1 cars are more like ~20-22 degrees supposedly,",
-                    "before considering the anti-ackermann adjustment",
-                    "They are specific to the track, however, so this might be too",
-                    "tight for Minecraft world. Default 22.0 for now")
-            .defineInRange("suspensionSteeringMaxAngle", 22.0, 1.0, 360.0);
 
     public static final ModConfigSpec.BooleanValue ENABLE_MOUSE_INPUT = BUILDER
             .comment("Enable the mouse to be used for inputs, like steering",

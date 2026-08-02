@@ -78,10 +78,10 @@ public class EngineBlock extends HorizontalDirectionalBlock implements EntityBlo
                     if (level.getBlockEntity(pos) instanceof EngineBlockEntity engine) {
                         return new EngineMenu(containerId, playerInventory, engine);
                     }
-                    return new EngineMenu(containerId, playerInventory);
+                    return new EngineMenu(containerId, playerInventory, pos);
                 },
                 CONTAINER_TITLE
-        ));
+        ), pos);
         return true;
     }
 

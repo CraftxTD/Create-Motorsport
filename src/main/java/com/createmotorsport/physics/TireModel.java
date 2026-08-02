@@ -6,6 +6,7 @@ import net.minecraft.util.Mth;
 // slip-based tire friction
 // based on Rapier's DynamicRayCastVehicleController (which came from Bullet's btRaycastVehicle)
 // added onto by referring to speed dreams a lot and vdrift
+// with a third model from Project Chrono
 
 public final class TireModel {
 
@@ -40,6 +41,53 @@ public final class TireModel {
         double slipRatio = (wheelSpeed - groundSpeed) / Math.max(Math.abs(groundSpeed), 2.0);
         return normalForce * surfaceMu * spec.grip() * slipCurve(slipRatio, spec.pacejkaB(), spec.pacejkaC(), spec.pacejkaE());
     }
+
+    /** Fiala brush tire model, ported from Project Chrono's ChFialaTire::FialaPatchForces
+     * @param kappa longitudinal slip ratio (wheelSpeed - groundSpeed) / refSpeed
+     * @param alpha slip angle (rad)
+     * @param fz    vertical load (N)
+     */
+    public static void fialaForces(double[] out, double kappa, double alpha, double fz,
+                                   double cKappa, double cAlpha, double muMax, double muMin, double frictionScale) {
+        if (fz <= 0.0 || cKappa <= 0.0 || cAlpha <= 0.0) {
+            out[0] = 0.0;
+            out[1] = 0.0;
+            return;
+        }
+        double tanA = Math.tan(alpha);
+        double ssa = Math.min(1.0, Math.sqrt(kappa * kappa + tanA * tanA));
+        double u = (muMax - (muMax - muMin) * ssa) * Math.max(0.0, frictionScale);
+        double uFz = u * fz;
+        if (uFz <= 1.0e-9) {
+            out[0] = 0.0;
+            out[1] = 0.0;
+            return;
+        }
+
+        // Longitudinal: linear below the critical slip, brush-saturation toward U*Fz above it
+        double sCritical = Math.abs(uFz / (2.0 * cKappa));
+        double fx;
+        if (Math.abs(kappa) < sCritical) {
+            fx = cKappa * kappa;
+        } else {
+            double fx2 = (uFz * uFz) / (4.0 * Math.abs(kappa) * cKappa);
+            fx = Math.signum(kappa) * (uFz - fx2);
+        }
+
+        // Lateral: brush cubic below the critical slip angle, full slide above it
+        double alphaCritical = Math.atan(3.0 * uFz / cAlpha);
+        double fy;
+        if (Math.abs(alpha) <= alphaCritical) {
+            double h = 1.0 - cAlpha * Math.abs(tanA) / (3.0 * uFz);
+            fy = -uFz * (1.0 - h * h * h) * Math.signum(alpha);
+        } else {
+            fy = -uFz * Math.signum(alpha);
+        }
+
+        out[0] = fx;
+        out[1] = fy;
+    }
+    // --------------------------------------------------
 
     // stop moving when still, based on how offroad seems to do it
     private static final double ROLL_RESIST_SMOOTH = 0.5;

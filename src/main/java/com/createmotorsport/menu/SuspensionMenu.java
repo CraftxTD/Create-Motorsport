@@ -22,12 +22,12 @@ public class SuspensionMenu extends AbstractContainerMenu {
     private static final int PLAYER_INVENTORY_END = PLAYER_INVENTORY_START + 27;
     private static final int HOTBAR_END = PLAYER_INVENTORY_END + 9;
 
-    public static final int CHANNEL_Y0 = 40;
+    public static final int CHANNEL_Y0 = 58;
     public static final int CHANNEL_ROW_H = 20;
     public static final int CHANNEL_SLOT_A_X = 120;
     public static final int CHANNEL_SLOT_B_X = 142;
     public static final int INV_X = 20;
-    public static final int INV_Y = 110;
+    public static final int INV_Y = 128;
     public static final int HOTBAR_Y = INV_Y + 58;
 
     private final Container controls;

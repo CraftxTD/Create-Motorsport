@@ -445,7 +445,7 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
     private static final String[] WHEEL_COLS = {
             "grounded", "load_N", "slip_ratio", "slip_angle_deg", "vlon_ms", "vlat_ms", "Fx_N", "Fy_N",
             "omega", "wheelspeed_ms", "spring_m", "compress_m", "mu", "steer_deg", "brake_Nm",
-            "grip_mult", "drive_Nm"
+            "grip_mult", "drive_Nm", "tire_temp_C"
     };
 
     private String buildHeader(CarActors car) {
@@ -509,11 +509,11 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
             for (SuspensionBlockEntity.WheelSide side : SuspensionBlockEntity.WheelSide.values()) {
                 SuspensionBlockEntity.WheelTelemetry t = s.getTelemetry(side);
                 sb.append(String.format(l,
-                        ",%d,%.1f,%.4f,%.3f,%.3f,%.3f,%.1f,%.1f,%.2f,%.3f,%.4f,%.4f,%.3f,%.2f,%.1f,%.3f,%.2f",
+                        ",%d,%.1f,%.4f,%.3f,%.3f,%.3f,%.1f,%.1f,%.2f,%.3f,%.4f,%.4f,%.3f,%.2f,%.1f,%.3f,%.2f,%.1f",
                         t.grounded() ? 1 : 0, t.loadN(), t.slipRatio(), t.slipAngleDeg(),
                         t.vLonMs(), t.vLatMs(), t.longForceN(), t.latForceN(), t.omega(),
                         t.wheelSpeedMs(), t.springLenM(), t.compressionM(), t.surfaceMu(),
-                        steerDeg, t.brakeTorqueNm(), t.gripMult(), t.driveTorqueNm()));
+                        steerDeg, t.brakeTorqueNm(), t.gripMult(), t.driveTorqueNm(), t.tireTempC()));
             }
         }
         return sb.toString();
