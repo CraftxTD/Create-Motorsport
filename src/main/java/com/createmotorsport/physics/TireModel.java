@@ -157,11 +157,10 @@ public final class TireModel {
             newOmega = 0.0;
         }
 
-        // If slip changed sign this step, converge to pure rolling instead of oscillating
         double rollingOmega = groundSpeed / radius;
         double slipBefore = omega - rollingOmega;
         double slipAfter = newOmega - rollingOmega;
-        if (slipBefore * slipAfter < 0.0 && Math.abs(driveTorque) < 1.0e-3 && brakeTorque < 1.0e-3) {
+        if (slipBefore * slipAfter < 0.0 && brakeTorque < 1.0e-3) {
             newOmega = rollingOmega;
         }
         return Mth.clamp(newOmega, -400.0, 400.0);

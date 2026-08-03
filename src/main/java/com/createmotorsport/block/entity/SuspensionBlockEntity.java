@@ -145,8 +145,7 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         double telemBrakeTorque;
         double telemGripMult = 1.0;
         double prevLongForce; // last longitudinal tire force, for the relaxation low-pass
-        double deflAlpha;     // lateral contact-patch deflection (m), Fiala transient slip state
-        double deflKappa;     // longitudinal contact-patch deflection (m), Fiala transient slip state
+        double deflAlpha;     // lateral contact patch deflection in (m), fiala lateral relaxation state
         double tireTemp = 20.0; // tire temperature (deg C), thermal model
     }
 
@@ -803,15 +802,14 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
                 wheel.omega = vLon / radius;
             }
             double wheelSpeed = wheel.omega * radius;
+            double vRef = Math.max(Math.abs(vLon), Config.SIM_LOWSPEED_REF.getAsDouble());
+            double kappa = (wheelSpeed - vLon) / vRef;
+            
             double relaxLen = Math.max(Config.FIALA_RELAX_LENGTH.getAsDouble(), 1.0e-3);
-            double slipVelLonInput = wheelSpeed - vLon;
-            double slipVelLatInput = vLat;
-            double decayRate = Math.max(Math.abs(vLon), Config.SIM_LOWSPEED_REF.getAsDouble()) / relaxLen;
+            double decayRate = vRef / relaxLen;
             double decay = Math.exp(-decayRate * dt);
             double tauEff = decayRate > 1.0e-9 ? (1.0 - decay) / decayRate : dt;
-            wheel.deflKappa = wheel.deflKappa * decay + slipVelLonInput * tauEff;
-            wheel.deflAlpha = wheel.deflAlpha * decay + slipVelLatInput * tauEff;
-            double kappa = wheel.deflKappa / relaxLen;
+            wheel.deflAlpha = wheel.deflAlpha * decay + vLat * tauEff;
             double alpha = Math.atan2(wheel.deflAlpha, relaxLen);
 
             double frictionScale = effectiveMu * tireSpec.grip();
