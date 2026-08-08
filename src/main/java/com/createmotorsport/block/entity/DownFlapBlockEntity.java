@@ -6,20 +6,27 @@ import com.simibubi.create.api.equipment.goggles.IHaveGoggleInformation;
 import com.simibubi.create.foundation.blockEntity.SmartBlockEntity;
 import com.simibubi.create.foundation.blockEntity.behaviour.BlockEntityBehaviour;
 import dev.ryanhcode.sable.api.block.BlockSubLevelLiftProvider;
+import dev.ryanhcode.sable.companion.math.Pose3d;
+import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import net.createmod.catnip.animation.LerpedFloat;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.util.Mth;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.joml.Vector3d;
+import org.joml.Vector3dc;
 
 import java.util.List;
 
 public class DownFlapBlockEntity extends SmartBlockEntity implements IHaveGoggleInformation, BlockSubLevelLiftProvider {
     int state = 0;
-    LerpedFloat clientState;
+    public LerpedFloat clientState;
 
     public DownFlapBlockEntity(BlockPos pos, BlockState state) {
         super(CreateMotorsport.DOWN_FLAP_BLOCK_ENTITY.get(), pos, state);
@@ -30,8 +37,6 @@ public class DownFlapBlockEntity extends SmartBlockEntity implements IHaveGoggle
     public void write(CompoundTag tag, HolderLookup.Provider registries, boolean clientPacket) {
         super.write(tag, registries, clientPacket);
         tag.putInt("State", state);
-
-
     }
 
     @Override
@@ -72,7 +77,14 @@ public class DownFlapBlockEntity extends SmartBlockEntity implements IHaveGoggle
     }
 
     @Override
-    public @NotNull Direction sable$getNormal(BlockState blockState) {
-        return null;
+    public @NotNull Direction sable$getNormal(BlockState state) {
+        return ((Direction) Direction.DOWN);
+    }
+
+    @Override
+    public void sable$contributeLiftAndDrag(LiftProviderContext ctx, ServerSubLevel subLevel, @NotNull Pose3d localPose, double timeStep, Vector3dc linearVelocity, Vector3dc angularVelocity, Vector3d linearImpulse, Vector3d angularImpulse, @Nullable LiftProviderGroup group) {
+        double x = state * -6;
+        ctx.dir().add(x, 0, 0);
+        BlockSubLevelLiftProvider.super.sable$contributeLiftAndDrag(ctx, subLevel, localPose, timeStep, linearVelocity, angularVelocity, linearImpulse, angularImpulse, group);
     }
 }
