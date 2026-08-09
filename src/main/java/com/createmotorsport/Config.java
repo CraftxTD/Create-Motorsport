@@ -60,6 +60,26 @@ public class Config {
                     "Default 0.15")
             .defineInRange("engineBrakeFraction", 0.15, 0.0, 0.3);
 
+    public static final ModConfigSpec.DoubleValue ENGINE_INERTIA = BUILDER
+            .comment("Rotating inertia of the engine + flywheel (kg*m^2)",
+                    "default 0.10")
+            .defineInRange("engineInertia", 0.10, 0.02, 5.0);
+
+    public static final ModConfigSpec.DoubleValue CLUTCH_MAX_TORQUE = BUILDER
+            .comment("Maximum torque (Nm) a fully-engaged clutch can transmit before it starts to slip.",
+                    "If it was above the engine peak crank torque, clutch would always slip. Default 600")
+            .defineInRange("clutchMaxTorque", 600.0, 50.0, 5000.0);
+
+    public static final ModConfigSpec.DoubleValue CLUTCH_LOCK_STIFFNESS = BUILDER
+            .comment("How hard the clutch pulls the engine speed to the gearbox speed once it is engaged and no",
+                    "longer slipping (Nm per rad/s of speed mismatch). Default 400")
+            .defineInRange("clutchLockStiffness", 400.0, 10.0, 5000.0);
+
+    public static final ModConfigSpec.DoubleValue LAUNCH_RPM = BUILDER
+            .comment("The RPM which the auto-clutch holds the engine at during a standing start, like an F1 launch",
+                    "based on F1 launch controls. Default 9000")
+            .defineInRange("launchRpm", 9000.0, 1000.0, 18000.0);
+
 
     static { BUILDER.pop(); }
 
@@ -69,10 +89,15 @@ public class Config {
     static { BUILDER.push("physics"); }
 
     public static final ModConfigSpec.DoubleValue DIFFERENTIAL_ANTISLIP_TORQUE = BUILDER
-            .comment("Limited-slip differential lock: 0 = open diff (inside wheel spins up freely), 200+ is like",
-                    "a near-locked spool (both wheels forced to the same speed); higher = more traction off the",
-                    "line but more understeer; default is 200")
+            .comment("Limited-slip differential lock (base setting): 0 = open diff (inside wheel spins up freely),",
+                    "200+ is a fully locked spool (both wheels forced to the same speed);",
+                    "higher = more traction off the line but more understeer; default is 200")
             .defineInRange("differentialAntiSlipTorque", 200.0, 0.0, 100000.0);
+
+    public static final ModConfigSpec.DoubleValue DIFFERENTIAL_ANTISLIP_DRIFT = BUILDER
+            .comment("When you hold the diff-mode button, an alternate differential setting is chosen",
+                    "This is partially how F1 drivers do controlled drifts. Default 40")
+            .defineInRange("differentialAntiSlipDrift", 40.0, 0.0, 100000.0);
 
     public static final ModConfigSpec.DoubleValue CENTER_DIFF_FRONT_BIAS = BUILDER
             .comment("AWD only; the center differential's front torque share",
@@ -155,8 +180,8 @@ public class Config {
 
     public static final ModConfigSpec.IntValue TIRE_MODEL = BUILDER
             .comment("Which tire model to use:",
-                    "1 = Arcade, 2 = Pacejka, 3 = Fiala")
-            .defineInRange("tireModel", 2, 1, 3);
+                    "1 = Arcade, 2 = Pacejka, 3 = Fiala, 4 = TMeasy")
+            .defineInRange("tireModel", 4, 1, 4);
 
     // ---- Fiala brush tire model (SIM mode only) -------------------------------------------------
     public static final ModConfigSpec.DoubleValue FIALA_CSLIP = BUILDER
@@ -188,6 +213,54 @@ public class Config {
                     "its slip force to build up, instead of responding instantly. Car wobbles if this is too low",
                     "Default 2.0")
             .defineInRange("fialaRelaxLength", 2.0, 0.05, 5.0);
+
+    // ---- TMeasy tire model (tire model 4 only) ---------------------------------------
+    public static final ModConfigSpec.DoubleValue TMEASY_SLIDE_GRIP = BUILDER
+            .comment("TMeasy tire model only; grip once the tire is fully sliding, as a fraction of its peak.",
+                    "Rill's data suggested as high as ~0.97 is still realistic, which was surprising to me",
+                    "Default 0.95")
+            .defineInRange("tmeasySlideGrip", 0.95, 0.1, 1.0);
+
+    public static final ModConfigSpec.DoubleValue TMEASY_SLIP_PEAK_LONG = BUILDER
+            .comment("TMeasy tire model only; longitudinal slip ratio at which grip peaks (drive/brake).",
+                    "Lower = peak grip at less wheelspin, but has a sharper drop from peak. Default 0.15")
+            .defineInRange("tmeasySlipAtPeakLong", 0.15, 0.02, 1.0);
+
+    public static final ModConfigSpec.DoubleValue TMEASY_SLIP_PEAK_LAT = BUILDER
+            .comment("TMeasy tire model only; lateral slip (~tan of slip angle) at which cornering grip peaks,",
+                    "Lower = sharper turn-in but breaks away at a smaller slip angle. Default 0.26")
+            .defineInRange("tmeasySlipAtPeakLat", 0.26, 0.02, 1.5);
+
+    public static final ModConfigSpec.DoubleValue TMEASY_SLIDE_SLIP_FACTOR = BUILDER
+            .comment("TMeasy tire model only; how far past the peak slip the tire reaches full slide, as a",
+                    "multiple of the peak slip, so 4.0 = grip fades from peak to sliding over 4x the peak slip",
+                    "Default 4.0")
+            .defineInRange("tmeasySlideSlipFactor", 4.0, 1.5, 12.0);
+
+    public static final ModConfigSpec.DoubleValue TMEASY_INITIAL_STIFFNESS = BUILDER
+            .comment("TMeasy tire model only; how sharply grip builds up from zero slip as a multiple of",
+                    "minimum consistent slope (peakForce / slipAtPeak). 2.0 is TMeasy's soft-tyre floor;",
+                    "Rills examples sit were about 3x, so default is 3")
+            .defineInRange("tmeasyInitialStiffness", 3.0, 2.0, 12.0);
+
+    public static final ModConfigSpec.DoubleValue TMEASY_STANDSTILL_LEAK = BUILDER
+            .comment("TMeasy tire model only; velocity (m/s) that makes the Dahl bristle's held side force leak away",
+                    "Held force fades over about fialaRelaxLength / this seconds",
+                    "HIGHER = less creep, but softer grip at very low speed. Default 2.0")
+            .defineInRange("tmeasyStandstillLeak", 2.0, 0.1, 8.0);
+
+    public static final ModConfigSpec.DoubleValue TMEASY_BRISTLE_DAMPING = BUILDER
+            .comment("TMeasy tire model only; damping of the Dahl stand-still bristle spring,",
+                    "as a fraction of critical damping,",
+                    "Lower makes the car sway at a stop; Raise past 1 to over-damp",
+                    "Default 1.0")
+            .defineInRange("tmeasyBristleDamping", 1.0, 0.1, 4.0);
+
+    public static final ModConfigSpec.DoubleValue TMEASY_STANDSTILL_SPEED = BUILDER
+            .comment("TMeasy tire model only; speed (m/s) below which the lateral force comes from Rill's Dahl",
+                    "bristle stand-still model. Uses fialaRelaxLength as the bristle's build-up distance,",
+                    "Default 2.0")
+            .defineInRange("tmeasyStandstillSpeed", 2.0, 0.2, 8.0);
 
     // ---- Pacejka slip curve shape (SIM tire model 2 only) ---------------------------------------
     public static final ModConfigSpec.DoubleValue PACEJKA_CORNERING_STIFFNESS = BUILDER
@@ -335,6 +408,11 @@ public class Config {
                     "~1.8 and the first half of the signal only asks for ~30% power, easier to feather the throttle")
             .defineInRange("pedalInputGamma", 1.8, 1.0, 4.0);
 
+    public static final ModConfigSpec.IntValue LIFT_STEPS_PER_PRESS = BUILDER
+            .comment("How many ride-height steps the suspension lift/lower controls move per key press",
+                    "Default 1")
+            .defineInRange("liftStepsPerPress", 1, 1, 24);
+
     public static final ModConfigSpec.BooleanValue ENABLE_ADVANCED_INPUT = BUILDER
             .comment("Enable Racing Wheel / Pedal support, or any other advanced controller",
                     "Leave off if you only use standard gamepads. Default is true")
@@ -393,6 +471,57 @@ public class Config {
                     "The wheel animates according to the scaled analog input",
                     "This number is purely cosmetic, default 200 degrees")
             .defineInRange("steeringWheelMaxAngle", 200.0, 30.0, 1080.0);
+
+    static { BUILDER.pop(); }
+
+    // =======================================================================
+    // EFFECTS
+    // =======================================================================
+    static { BUILDER.push("effects"); }
+
+    public static final ModConfigSpec.BooleanValue TIRE_SMOKE = BUILDER
+            .comment("Turn it off if FPS is an issue")
+            .define("tireSmoke", true);
+
+    public static final ModConfigSpec.DoubleValue TIRE_SMOKE_SLIP_THRESHOLD = BUILDER
+            .comment("Default 0.35")
+            .defineInRange("tireSmokeSlipThreshold", 0.35, 0.05, 1.0);
+
+    public static final ModConfigSpec.DoubleValue TIRE_SMOKE_MIN_SPEED = BUILDER
+            .comment("Min speed in m/s. Default 2.0")
+            .defineInRange("tireSmokeMinSpeed", 2.0, 0.0, 15.0);
+
+    public static final ModConfigSpec.DoubleValue TIRE_SMOKE_DENSITY = BUILDER
+            .comment("Turn this down to help with FPS issues")
+            .defineInRange("tireSmokeDensity", 20.0, 0.1, 32.0);
+
+    public static final ModConfigSpec.DoubleValue TIRE_SMOKE_HEAT_BOOST = BUILDER
+            .comment("Default 0.5")
+            .defineInRange("tireSmokeHeatBoost", 0.5, 0.0, 1.0);
+
+    public static final ModConfigSpec.BooleanValue TIRE_SMOKE_GROUND_DUST = BUILDER
+            .comment("On certain blocks (currently just dirt, sand, gravel, snow, grass) kick up matching particles instead",
+                    "instead of smoke. Smoke is on every other surface. Default true")
+            .define("tireSmokeGroundDust", true);
+
+    static { BUILDER.pop(); }
+
+    // =======================================================================
+    // HUD
+    // =======================================================================
+    static { BUILDER.push("hud"); }
+
+    public static final ModConfigSpec.DoubleValue HUD_SCALE = BUILDER
+            .comment("Default 1.0")
+            .defineInRange("hudScale", 1.0, 0.25, 4.0);
+
+    public static final ModConfigSpec.IntValue HUD_X = BUILDER
+            .comment("Default 4")
+            .defineInRange("hudX", 4, 0, 8000);
+
+    public static final ModConfigSpec.IntValue HUD_Y = BUILDER
+            .comment("Default 4")
+            .defineInRange("hudY", 4, 0, 8000);
 
     static { BUILDER.pop(); }
 

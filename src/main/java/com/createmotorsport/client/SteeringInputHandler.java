@@ -31,6 +31,8 @@ public final class SteeringInputHandler {
     private static int lastBrake = -1;
     private static int lastSteer = -999;
 
+    private static boolean hudTogglePrev;
+
     // Fake steering input for keypresses to apply a gamma too, so they can have an assist too
     private static float keySteer = 0.0f;
     // Fake pedal input also
@@ -136,6 +138,13 @@ public final class SteeringInputHandler {
                 mask |= (1 << i);
             }
         }
+
+        // client only HUD toggle
+        boolean hudDown = (mask & (1 << SteeringControl.HUD_TOGGLE.ordinal())) != 0;
+        if (hudDown && !hudTogglePrev) {
+            MotorsportHud.toggle();
+        }
+        hudTogglePrev = hudDown;
 
 
         // Keypress assists create fake inputs so the input isnt instantaneous and its something for the Gamma to work on

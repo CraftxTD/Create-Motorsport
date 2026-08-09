@@ -45,7 +45,11 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
         OVERTAKE("Overtake"),
         ENGINE_MODE_UP("Engine Mode+"),
         ENGINE_MODE_DOWN("Engine Mode-"),
-        TRACTION_CONTROL("Traction Ctrl");
+        TRACTION_CONTROL("Traction Ctrl"),
+        LIFT_UP("Lift Up"),
+        LIFT_DOWN("Lift Down"),
+        DIFF_MODE("Diff Mode"),
+        HUD_TOGGLE("HUD Toggle");
 
         private final String displayName;
 
@@ -130,6 +134,16 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
     private boolean tractionControlOn;
     private boolean boosting;
     private int telemetryCooldown;
+
+    // for drivers' differential controls
+    private int prevMomentaryMask;
+    private boolean driftDiffMode;
+
+    // More telemetry for HUD
+    private int throttlePct;
+    private int[] hudTireTempsC = new int[0];
+    private int hudSlipMask;// 1 = slipping
+    private int hudEffMuX100;//avg friction coef across tires
 
     // Client-side wheel-rotation interpolation.
     private double clientWheelAngle;
@@ -326,6 +340,17 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
         boolean modeDown = (inputMask & (1 << SteeringControl.ENGINE_MODE_DOWN.ordinal())) != 0;
         boolean tractionControl = (inputMask & (1 << SteeringControl.TRACTION_CONTROL.ordinal())) != 0;
 
+        int liftUpBit = 1 << SteeringControl.LIFT_UP.ordinal();
+        int liftDownBit = 1 << SteeringControl.LIFT_DOWN.ordinal();
+        int diffBit = 1 << SteeringControl.DIFF_MODE.ordinal();
+        boolean liftUpEdge = (inputMask & liftUpBit) != 0 && (prevMomentaryMask & liftUpBit) == 0;
+        boolean liftDownEdge = (inputMask & liftDownBit) != 0 && (prevMomentaryMask & liftDownBit) == 0;
+        boolean diffEdge = (inputMask & diffBit) != 0 && (prevMomentaryMask & diffBit) == 0;
+        prevMomentaryMask = inputMask;
+        if (diffEdge) {
+            driftDiffMode = !driftDiffMode;
+        }
+
         float throttle01 = driverThrottle01;
         double steerSignal = driverSteer01 * 15.0;
         double brakeSignal = driverBrake01 * 15.0;
@@ -359,7 +384,14 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
 
 
         // now that front axle is set by user, steering axle is way easier to decide
+        int liftDelta = Config.LIFT_STEPS_PER_PRESS.getAsInt();
         for (SuspensionBlockEntity s : suspensions) {
+            if (liftUpEdge) {
+                s.adjustLift(liftDelta);
+            } else if (liftDownEdge) {
+                s.adjustLift(-liftDelta);
+            }
+            s.setDriftDiffMode(driftDiffMode);
             s.setDriverSteering(s.isFrontAxle() ? steerSignal : 0.0, brakeSignal);
         }
     }
@@ -521,7 +553,11 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
 
     // ========================================================================================================
 
-    // server: read speed/gear/RPM/brake/steering/etc off the car for the dashboard
+    // what counts as slipping for the HUD
+    private static final double HUD_SLIP_RATIO = 0.20;
+    private static final double HUD_SLIP_ANGLE = 10.0;
+
+    // server: read speed/gear/RPM/brake/steering/etc off the car for the dashboard + HUD
     private void gatherTelemetry() {
         int gear = 1;
         int enginRpm = 0;
@@ -529,6 +565,7 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
         int mode = 8;
         boolean tc = false;
         boolean boost = false;
+        List<SuspensionBlockEntity> susp = new ArrayList<>();
 
         SubLevel subLevel = Sable.HELPER.getContaining(this);
         if (subLevel != null) {
@@ -539,12 +576,41 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
                     mode = engine.getPowerMode();
                     tc = engine.isTractionControlOn();
                     boost = engine.isBoosting();
-                    break;
+                } else if (actor instanceof SuspensionBlockEntity s && !s.isRemoved()) {
+                    susp.add(s);
                 }
             }
             Vec3 velocity = Sable.HELPER.getVelocity(level, Vec3.atCenterOf(worldPosition));
             speed = (int) Math.round(velocity.length() * 3.6); // m/s -> km/h
         }
+
+        // sorting so HUD can label FL/FR then RL/RR
+        susp.sort(java.util.Comparator.comparing((SuspensionBlockEntity s) -> !s.isFrontAxle())
+                .thenComparingLong(s -> s.getBlockPos().asLong()));
+        boolean thermal = Config.TIRE_THERMAL_MODEL.get();
+        int[] temps = new int[thermal ? susp.size() * 2 : 0];
+        int slipMask = 0;
+        double muSum = 0.0;
+        int muCount = 0;
+        int ti = 0;
+        for (SuspensionBlockEntity s : susp) {
+            for (SuspensionBlockEntity.WheelSide side : SuspensionBlockEntity.WheelSide.values()) {
+                SuspensionBlockEntity.WheelTelemetry t = s.getTelemetry(side);
+                if (thermal) {
+                    temps[ti] = (int) Math.round(t.tireTempC());
+                }
+                if (t.grounded()) {
+                    if (Math.abs(t.slipRatio()) > HUD_SLIP_RATIO || Math.abs(t.slipAngleDeg()) > HUD_SLIP_ANGLE) {
+                        slipMask |= (1 << ti);
+                    }
+                    muSum += s.getPeakMu(side);
+                    muCount++;
+                }
+                ti++;
+            }
+        }
+        int effMu = muCount > 0 ? (int) Math.round(muSum / muCount * 100.0) : 0;
+        int thr = Math.round(Mth.clamp(driverThrottle01, 0.0F, 1.0F) * 100.0F);
 
         boolean braking = (inputMask & (1 << SteeringControl.BRAKE.ordinal())) != 0;
 
@@ -554,7 +620,9 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
 
         boolean changed = speed != speedKmh || gear != gearCode || Math.abs(enginRpm - rpm) > 50
                 || braking != brake || Math.abs(steering - steer) > 2
-                || mode != powerMode || tc != tractionControlOn || boost != boosting;
+                || mode != powerMode || tc != tractionControlOn || boost != boosting
+                || thr != throttlePct || slipMask != hudSlipMask || effMu != hudEffMuX100
+                || !java.util.Arrays.equals(temps, hudTireTempsC);
         speedKmh = speed;
         gearCode = gear;
         rpm = enginRpm;
@@ -563,6 +631,10 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
         powerMode = mode;
         tractionControlOn = tc;
         boosting = boost;
+        throttlePct = thr;
+        hudTireTempsC = temps;
+        hudSlipMask = slipMask;
+        hudEffMuX100 = effMu;
 
         if (telemetryCooldown > 0) {
             telemetryCooldown--;
@@ -571,6 +643,22 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
             telemetryCooldown = 2;
             notifyUpdate();
         }
+    }
+
+    public int getThrottlePct() {
+        return throttlePct;
+    }
+
+    public int[] getTireTempsC() {
+        return hudTireTempsC;
+    }
+
+    public int getSlipMask() {
+        return hudSlipMask;
+    }
+
+    public double getEffectiveMu() {
+        return hudEffMuX100 / 100.0;
     }
 
     public int getSpeedKmh() {
@@ -758,6 +846,10 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
             tag.putInt("PowerMode", powerMode);
             tag.putBoolean("Tc", tractionControlOn);
             tag.putBoolean("Boost", boosting);
+            tag.putInt("Throttle", throttlePct);
+            tag.putIntArray("TireTemps", hudTireTempsC);
+            tag.putInt("SlipMask", hudSlipMask);
+            tag.putInt("EffMu", hudEffMuX100);
         }
     }
 
@@ -795,6 +887,10 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
             powerMode = tag.getInt("PowerMode");
             tractionControlOn = tag.getBoolean("Tc");
             boosting = tag.getBoolean("Boost");
+            throttlePct = tag.getInt("Throttle");
+            hudTireTempsC = tag.getIntArray("TireTemps");
+            hudSlipMask = tag.getInt("SlipMask");
+            hudEffMuX100 = tag.getInt("EffMu");
         }
         refreshLinks();
     }

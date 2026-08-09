@@ -34,6 +34,7 @@ public class CreateMotorsportClient {
         NeoForge.EVENT_BUS.addListener(SteeringInputHandler::onScreenOpening);
         NeoForge.EVENT_BUS.addListener(com.createmotorsport.client.MouseSteerCamera::onCameraAngles);
         NeoForge.EVENT_BUS.addListener(MotorsportCommands::register);
+        NeoForge.EVENT_BUS.addListener(com.createmotorsport.client.MotorsportHud::onRenderGui);
     }
 
     private void registerMenuScreens(RegisterMenuScreensEvent event) {

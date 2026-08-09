@@ -89,6 +89,67 @@ public final class TireModel {
     }
     // --------------------------------------------------
 
+    /**
+     *  This is Dr. Rill's TMeasy model ported directly from Project Chrono. Dr. Rill's textbook Vehicle Dynamics has been a great reference too
+     *  So in this model, there is one combined slip (s) mapping to a force (f) and defined very intuitively by
+     *  df0 (initial slope), fm (peak force) at sm (slip) , and fs (sliding force) reached at ss (slip)
+     *
+     *  Im also going to copy some of their notes below
+     */
+
+    // Ref: Georg Rill, "Road Vehicle Dynamics - Fundamentals and Modeling",
+    //          https://www.routledge.com/Road-Vehicle-Dynamics-Fundamentals-and-Modeling-with-MATLAB/Rill-Castro/p/book/9780367199739
+    //      Georg Rill, "An Engineer's Guess On Tyre Model Parameter Made Possible With TMeasy",
+    //          https://www.researchgate.net/publication/317036908_An_Engineer's_Guess_on_Tyre_Parameter_made_possible_with_TMeasy
+    //      Georg Rill, "Simulation von Kraftfahrzeugen",
+    //          https://www.researchgate.net/publication/317037037_Simulation_von_Kraftfahrzeugen
+    //
+    // Known differences to the commercial version:
+    //  - No parking slip calculations
+    //  - No dynamic parking torque
+    //  - No dynamic tire inflation pressure
+    //  - No belt dynamics
+    //  - Simplified stand still handling
+
+    public static void tmeasyCombined(double[] out, double s, double df0, double sm, double fm,
+                                      double ss, double fs) {
+        double df0loc = sm > 0.0 ? Math.max(2.0 * fm / sm, df0) : 0.0;
+        if (s <= 0.0 || df0loc <= 0.0 || fm <= 0.0) {
+            out[0] = 0.0;
+            out[1] = 0.0;
+            return;
+        }
+        double f;
+        double fos;
+        if (s > ss) {                             // full sliding
+            f = fs;
+            fos = f / s;
+        } else if (s < sm) {                      // adhesion
+            double p = df0loc * sm / fm - 2.0;
+            double sn = s / sm;
+            double dn = 1.0 + (sn + p) * sn;
+            f = df0loc * sm * sn / dn;
+            fos = df0loc / dn;
+        } else {                            // transition from peak toward sliding
+            double a = (fm / sm) * (fm / sm) / (df0loc * sm);   // from 2nd deriv of f at s = sm
+            double sstar = sm + (fm - fs) / (a * (ss - sm));    // where the two parabolas would join
+            if (sstar <= ss) {
+                if (s <= sstar) {
+                    f = fm - a * (s - sm) * (s - sm);            // 1st parabola
+                } else {
+                    double b = a * (sstar - sm) / (ss - sstar);
+                    f = fs + b * (ss - s) * (ss - s);            // 2nd parabola
+                }
+            } else {
+                double sn = (s - sm) / (ss - sm);
+                f = fm - (fm - fs) * sn * sn * (3.0 - 2.0 * sn); // cubic fallback (smoothstep)
+            }
+            fos = f / s;
+        }
+        out[0] = f;
+        out[1] = fos;
+    }
+
     // stop moving when still, based on how offroad seems to do it
     private static final double ROLL_RESIST_SMOOTH = 0.5;
 
