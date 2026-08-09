@@ -53,6 +53,7 @@ public class DownFlapBlockEntity extends SmartBlockEntity implements IHaveGoggle
 
     public void changeState(int n) {
         state = n;
+        sendData();
     }
 
     @Override

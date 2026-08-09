@@ -22,9 +22,6 @@ public class DownFlapRenderer extends SafeBlockEntityRenderer<DownFlapBlockEntit
 
     @Override
     protected void renderSafe(DownFlapBlockEntity be, float partialTicks, PoseStack ms, MultiBufferSource buffer, int light, int overlay) {
-
-       if (VisualizationManager.supportsVisualization(be.getLevel())) return;
-
        BlockState flapState = be.getBlockState();
        float state = be.clientState.getValue(partialTicks);
 
