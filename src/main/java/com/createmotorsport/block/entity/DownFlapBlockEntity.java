@@ -1,24 +1,23 @@
 package com.createmotorsport.block.entity;
 
 import com.createmotorsport.CreateMotorsport;
-import com.createmotorsport.block.DownFlapBlock;
 import com.simibubi.create.api.equipment.goggles.IHaveGoggleInformation;
 import com.simibubi.create.foundation.blockEntity.SmartBlockEntity;
 import com.simibubi.create.foundation.blockEntity.behaviour.BlockEntityBehaviour;
-import dev.ryanhcode.sable.api.block.BlockSubLevelLiftProvider;
-import dev.ryanhcode.sable.companion.math.Pose3d;
-import dev.ryanhcode.sable.sublevel.ServerSubLevel;
+
 import net.createmod.catnip.animation.LerpedFloat;
+import net.createmod.catnip.animation.LerpedFloat.Chaser;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.util.Mth;
-import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+
+import dev.ryanhcode.sable.api.block.BlockSubLevelLiftProvider;
+import dev.ryanhcode.sable.companion.math.Pose3d;
+import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import org.joml.Vector3d;
 import org.joml.Vector3dc;
 
@@ -43,7 +42,7 @@ public class DownFlapBlockEntity extends SmartBlockEntity implements IHaveGoggle
     protected void read(CompoundTag tag, HolderLookup.Provider registries, boolean clientPacket) {
         super.read(tag, registries, clientPacket);
         state = tag.getInt("State");
-        clientState.chase(state, 0.2f, LerpedFloat.Chaser.EXP);
+        clientState.chase(state, 0.5f, Chaser.EXP);
     }
 
     @Override
