@@ -285,14 +285,14 @@ public class Config {
     public static final ModConfigSpec.DoubleValue TIRE_GRIP_FRONT = BUILDER
             .comment("Friction coefficient of FRONT racing slicks.",
                     "Separated per axle as a simple way to adjust the",
-                    "oversteering balance. Default 1.6")
-            .defineInRange("tireGripFront", 1.6, 0.1, 2.5);
+                    "oversteering balance. Default 1.9")
+            .defineInRange("tireGripFront", 1.9, 0.1, 2.5);
 
     public static final ModConfigSpec.DoubleValue TIRE_GRIP_REAR = BUILDER
             .comment("Friction coefficient of REAR racing slicks.",
                     "Separated per axle as a simple way to adjust the",
-                    "oversteering balance. Default 1.4")
-            .defineInRange("tireGripRear", 1.4, 0.1, 2.5);
+                    "oversteering balance. Default 1.7")
+            .defineInRange("tireGripRear", 1.7, 0.1, 2.5);
 
     // ---- Tire temperature (Speed Dreams style; applies to all tire models) ----------------------
     public static final ModConfigSpec.BooleanValue TIRE_THERMAL_MODEL = BUILDER
