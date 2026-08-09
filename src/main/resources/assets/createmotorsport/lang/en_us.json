@@ -31,5 +31,6 @@
   "createmotorsport.configuration.section.createmotorsport.common.toml": "Create: Motorsport Configs",
   "createmotorsport.configuration.section.createmotorsport.common.toml.title": "Create: Motorsport Configs",
   "createmotorsport.configuration.enableDebugLogging": "Enable Debug Logging",
-  "createmotorsport.configuration.drivetrainTorqueScale": "Drivetrain Torque Scale"
+  "createmotorsport.configuration.drivetrainTorqueScale": "Drivetrain Torque Scale",
+  "createmotorsport.tooltip.flapState": "Flap State: %1$s/15"
 }

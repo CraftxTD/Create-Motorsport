@@ -26,6 +26,7 @@ import net.minecraft.world.level.block.HorizontalDirectionalBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.BooleanProperty;
 import net.minecraft.world.phys.BlockHitResult;
 import org.jetbrains.annotations.Nullable;
@@ -169,9 +170,9 @@ public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityB
 
 
     @MethodsReturnNonnullByDefault
-    private static class PlacementHelper extends PoleHelper<Direction.Axis> {
+    private static class PlacementHelper extends PoleHelper<Direction> {
         private PlacementHelper() {
-            super(state -> state.getBlock() instanceof DownFlapBlock, state -> state.getValue(AXIS), AXIS);
+            super(state -> state.getBlock() instanceof DownFlapBlock, state -> state.getValue(FACING).getClockWise().getAxis(), FACING);
         }
 
         @Override

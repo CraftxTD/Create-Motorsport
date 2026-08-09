@@ -43,6 +43,6 @@ public class CreateMotorsportClient {
     private void registerRenderers(EntityRenderersEvent.RegisterRenderers event) {
         event.registerBlockEntityRenderer(CreateMotorsport.SUSPENSION_BLOCK_ENTITY.get(), context -> new SuspensionRenderer());
         event.registerBlockEntityRenderer(CreateMotorsport.STEERING_WHEEL_BLOCK_ENTITY.get(), context -> new SteeringWheelRenderer());
-        event.registerBlockEntityRenderer(CreateMotorsport.DOWN_FLAP_BLOCK_ENTITY.get(), context -> new DownFlapRenderer());
+        event.registerBlockEntityRenderer(CreateMotorsport.DOWN_FLAP_BLOCK_ENTITY.get(), DownFlapRenderer::new);
     }
 }
