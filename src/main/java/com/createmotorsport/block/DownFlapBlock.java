@@ -4,11 +4,17 @@ import com.createmotorsport.CreateMotorsport;
 import com.createmotorsport.block.entity.DownFlapBlockEntity;
 import com.mojang.serialization.MapCodec;
 import com.simibubi.create.foundation.placement.PoleHelper;
+import net.createmod.catnip.placement.IPlacementHelper;
+import net.createmod.catnip.placement.PlacementHelpers;
 import net.minecraft.MethodsReturnNonnullByDefault;
 import net.minecraft.core.Direction;
 import com.simibubi.create.content.equipment.wrench.IWrenchable;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.ItemInteractionResult;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.item.context.UseOnContext;
@@ -21,6 +27,7 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.level.block.state.properties.BooleanProperty;
+import net.minecraft.world.phys.BlockHitResult;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
@@ -33,6 +40,8 @@ public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityB
    public static final MapCodec<DownFlapBlock> CODEC = simpleCodec(DownFlapBlock::new);
    public static final BooleanProperty PILLAR = BooleanProperty.create("pillar");
     public int power = 0;
+
+    private static final int placementHelperId = PlacementHelpers.register(new DownFlapBlock.PlacementHelper());
 
     public DownFlapBlock(Properties properties) {
         super(properties);
@@ -48,6 +57,17 @@ public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityB
     @Override
     public BlockEntity newBlockEntity(BlockPos pos, BlockState state) {
         return new DownFlapBlockEntity(pos, state);
+    }
+
+    @Override
+    protected ItemInteractionResult useItemOn(ItemStack stack, BlockState state, Level level, BlockPos pos, Player player, InteractionHand hand, BlockHitResult hitResult) {
+        IPlacementHelper placementHelper = PlacementHelpers.get(placementHelperId);
+        if (!player.isShiftKeyDown() && player.mayBuild()) {
+            if (placementHelper.matchesItem(stack))
+                return placementHelper.getOffset(player, level, state, pos, hitResult).placeInWorld(level, ((BlockItem) stack.getItem()), player, hand, hitResult);
+        }
+
+        return ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION;
     }
 
     @Override
@@ -103,12 +123,12 @@ public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityB
         }
 
         int i = 0;
-        ArrayList<Direction> sides = new ArrayList<Direction>();
+        ArrayList<Direction> sides = new ArrayList<>();
         sides.add(state.getValue(FACING).getClockWise());
         sides.add(state.getValue(FACING).getCounterClockWise());
 
         for (Direction direction : sides) {
-            int j = 0;
+            int j;
             BlockState blockState = world.getBlockState(pos.relative(direction));
             Block block = blockState.getBlock();
             if (block instanceof DownFlapBlock flapBlock) {
