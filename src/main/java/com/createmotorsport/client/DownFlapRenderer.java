@@ -5,7 +5,6 @@ import com.createmotorsport.block.entity.DownFlapBlockEntity;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.simibubi.create.foundation.blockEntity.renderer.SafeBlockEntityRenderer;
-import dev.engine_room.flywheel.api.visualization.VisualizationManager;
 import net.createmod.catnip.math.AngleHelper;
 import net.createmod.catnip.render.CachedBuffers;
 import net.createmod.catnip.render.SuperByteBuffer;
@@ -31,7 +30,7 @@ public class DownFlapRenderer extends SafeBlockEntityRenderer<DownFlapBlockEntit
         SuperByteBuffer flap = CachedBuffers.partial(MotorsportPartialModels.DOWNFLAP_WING, flapState);
         float angle = (float) ((state * 6) / 180 * Math.PI);
         transform(flap, flapState).translate(1 / 2f, 1 / 16f, 1 / 2f)
-                .rotate(angle, Direction.EAST)
+                .rotate(angle, Direction.WEST)
                 .translate(-1 / 2f, -1 / 16f, -1 / 2f);
         flap.light(light)
                 .renderInto(ms, vb);
