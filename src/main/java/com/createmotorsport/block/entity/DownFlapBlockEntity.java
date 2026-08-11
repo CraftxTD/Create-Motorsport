@@ -36,15 +36,15 @@ public class DownFlapBlockEntity extends SmartBlockEntity implements IHaveGoggle
 
     @Override
     public void write(CompoundTag tag, HolderLookup.Provider registries, boolean clientPacket) {
+        tag.putInt("Flap State", state);
         super.write(tag, registries, clientPacket);
-        tag.putInt("State", state);
     }
 
     @Override
     protected void read(CompoundTag tag, HolderLookup.Provider registries, boolean clientPacket) {
-        super.read(tag, registries, clientPacket);
-        state = tag.getInt("State");
+        state = tag.getInt("Flap State");
         clientState.chase(state, 0.5f, Chaser.EXP);
+        super.read(tag, registries, clientPacket);
     }
 
     @Override
@@ -56,6 +56,8 @@ public class DownFlapBlockEntity extends SmartBlockEntity implements IHaveGoggle
         sendData();
     }
 
+    public int getState() { return this.state; }
+
     @Override
     public void initialize() {
         super.initialize();
@@ -64,8 +66,9 @@ public class DownFlapBlockEntity extends SmartBlockEntity implements IHaveGoggle
     @Override
     public void tick() {
         super.tick();
-        if (level.isClientSide)
+        if (level.isClientSide) {
             clientState.tickChaser();
+        }
     }
 
     @Override
@@ -78,10 +81,10 @@ public class DownFlapBlockEntity extends SmartBlockEntity implements IHaveGoggle
         super.onChunkUnloaded();
     }
 
+
     @Override
     public boolean addToGoggleTooltip(List<Component> tooltip, boolean isPlayerSneaking) {
         CreateLang.translate("tooltip.flapState", this.state).forGoggles(tooltip);
-
         return true;
     }
 

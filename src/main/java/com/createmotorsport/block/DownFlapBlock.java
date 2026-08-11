@@ -2,6 +2,7 @@ package com.createmotorsport.block;
 
 import com.createmotorsport.CreateMotorsport;
 import com.createmotorsport.block.entity.DownFlapBlockEntity;
+import com.createmotorsport.block.entity.SteeringWheelBlockEntity;
 import com.mojang.serialization.MapCodec;
 import com.simibubi.create.foundation.placement.PoleHelper;
 import net.createmod.catnip.placement.IPlacementHelper;
@@ -24,10 +25,13 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.HorizontalDirectionalBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntityTicker;
+import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.BooleanProperty;
+import net.minecraft.world.level.block.state.properties.IntegerProperty;
 import net.minecraft.world.phys.BlockHitResult;
 import org.jetbrains.annotations.Nullable;
 
@@ -40,13 +44,13 @@ import static net.minecraft.world.level.block.state.properties.BlockStatePropert
 public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityBlock, IWrenchable {
    public static final MapCodec<DownFlapBlock> CODEC = simpleCodec(DownFlapBlock::new);
    public static final BooleanProperty PILLAR = BooleanProperty.create("pillar");
-    public int power = 0;
+   public static final IntegerProperty FLAP_POWER = IntegerProperty.create("flap_power", 0, 15);
 
     private static final int placementHelperId = PlacementHelpers.register(new DownFlapBlock.PlacementHelper());
 
     public DownFlapBlock(Properties properties) {
         super(properties);
-        registerDefaultState(defaultBlockState().setValue(PILLAR, false));
+        registerDefaultState(defaultBlockState().setValue(PILLAR, false).setValue(FLAP_POWER, 0));
     }
 
     @Override
@@ -87,6 +91,7 @@ public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityB
         return InteractionResult.SUCCESS;
     }
 
+
     @Override
     public void neighborChanged(BlockState state, Level level, BlockPos pos, Block block, BlockPos fromPos,
                                 boolean isMoving) {
@@ -94,59 +99,58 @@ public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityB
             return;
         }
 
+        Direction facing = state.getValue(FACING);
         DownFlapBlockEntity be = (DownFlapBlockEntity) level.getBlockEntity(pos);
+        int power = 0;
+
         if (be == null) { return; }
         if (state.getValue(PILLAR)) {
             power = level.getBestNeighborSignal(pos);
         } else {
-            int temp = getNeighborFlapSignal(state, level, pos, fromPos);
-            power = (temp == -1) ? power : temp;
+            Block fromBlock = level.getBlockState(fromPos).getBlock();
+            if (fromBlock instanceof DownFlapBlock) {
+                int[] temp = getNeighborFlapSignal(state, level, pos);
+                power = (temp[1] > -1) ? temp[1] : temp[0];
+            }
         }
-        be.changeState(power);
+        if (state.getValue(FLAP_POWER) != power) {
+            level.setBlockAndUpdate(pos, state.setValue(FLAP_POWER, power));
+            be.changeState(power);
+        }
 
         if (!level.getBlockTicks()
                 .willTickThisTick(pos, this))
             level.scheduleTick(pos, this, 1);
     }
 
-    // Overload for getting nearby flap signal
-    public int getSignal(BlockState state) {
-        if (!state.getValue(PILLAR)) {
-            return 0;
-        }
-        return power;
-    }
-
-    private int getNeighborFlapSignal(BlockState state, BlockGetter world, BlockPos pos, BlockPos fromPos) {
-        Block fromBlock = world.getBlockState(fromPos).getBlock();
-        if (!(fromBlock instanceof DownFlapBlock)) {
-            return -1;
-        }
-
-        int i = 0;
+    private int[] getNeighborFlapSignal(BlockState state, Level level, BlockPos pos) {
+        int[] nums = new int[2];
+        // regular
+        nums[0] = 0;
+        // pillar
+        nums[1] = -1;
         ArrayList<Direction> sides = new ArrayList<>();
         sides.add(state.getValue(FACING).getClockWise());
         sides.add(state.getValue(FACING).getCounterClockWise());
 
         int j;
         for (Direction direction : sides) {
-            BlockState blockState = world.getBlockState(pos.relative(direction));
-            Block block = blockState.getBlock();
-            if (block instanceof DownFlapBlock flapBlock) {
-                j = flapBlock.getSignal(blockState);
+            Block block = level.getBlockState(pos.relative(direction)).getBlock();
+            if (block instanceof DownFlapBlock flap) {
+                j = level.getBlockState(pos.relative(direction)).getValue(FLAP_POWER);
             } else {
                 continue;
             }
-            if (j >= 15) {
-                return 15;
+            if (level.getBlockState(pos.relative(direction)).getValue(PILLAR) && j > nums[1]) {
+                nums[1] = j;
+                continue;
             }
 
-            if (j > i) {
-                i = j;
+            if (j > nums[0]) {
+                nums[0] = j;
             }
         }
-
-        return i;
+        return nums;
     }
 
     @Override
@@ -159,13 +163,22 @@ public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityB
 
     @Override
     protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder) {
-        builder.add(HORIZONTAL_FACING, PILLAR);
+        builder.add(HORIZONTAL_FACING, PILLAR, FLAP_POWER);
     }
 
     @Nullable
     @Override
     public BlockState getStateForPlacement(BlockPlaceContext context) {
         return defaultBlockState().setValue(HORIZONTAL_FACING, context.getHorizontalDirection());
+    }
+
+
+    @Nullable
+    @Override
+    public <T extends BlockEntity> BlockEntityTicker<T> getTicker(Level level, BlockState state, BlockEntityType<T> blockEntityType) {
+        return blockEntityType == CreateMotorsport.DOWN_FLAP_BLOCK_ENTITY.get()
+                ? (tickerLevel, pos, tickerState, be) -> ((DownFlapBlockEntity) be).tick()
+                : null;
     }
 
 
