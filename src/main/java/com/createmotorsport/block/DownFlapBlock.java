@@ -7,6 +7,7 @@ import com.mojang.serialization.MapCodec;
 import com.simibubi.create.foundation.placement.PoleHelper;
 import dev.ryanhcode.sable.api.block.BlockSubLevelLiftProvider;
 import dev.ryanhcode.sable.companion.math.Pose3d;
+import dev.ryanhcode.sable.physics.config.dimension_physics.DimensionPhysicsData;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import net.createmod.catnip.placement.IPlacementHelper;
 import net.createmod.catnip.placement.PlacementHelpers;
@@ -201,9 +202,59 @@ public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityB
     }
 
     @Override
+    public float sable$getParallelDragScalar() {
+        return 2.0F;
+    }
+
+    @Override
+    public float sable$getLiftScalar() {
+        return 0.0F;
+    }
+
+    @Override
     public void sable$contributeLiftAndDrag(BlockSubLevelLiftProvider.LiftProviderContext ctx, ServerSubLevel subLevel, @NotNull Pose3d localPose, double timeStep, Vector3dc linearVelocity, Vector3dc angularVelocity, Vector3d linearImpulse, Vector3d angularImpulse, @Nullable BlockSubLevelLiftProvider.LiftProviderGroup group) {
-        double z = ctx.state().getValue(FLAP_POWER) * -60;
-        ctx.dir().add(0, 0, z);
-        BlockSubLevelLiftProvider.super.sable$contributeLiftAndDrag(ctx, subLevel, localPose, timeStep, linearVelocity, angularVelocity, linearImpulse, angularImpulse, group);
+        BlockSubLevelLiftProvider.resetVectors();
+        BlockState state = ctx.state();
+        float dragScalar = (float) state.getValue(DownFlapBlock.FLAP_POWER) / 15 * this.sable$getParallelDragScalar();
+
+        LIFT_NORMAL.set(ctx.dir().x(), ctx.dir().y(), ctx.dir().z());
+        LIFT_POS.set((double)ctx.pos().getX() + (double)0.5F, (double) ctx.pos().getY() + (double)0.5F, (double) ctx.pos().getZ() + (double)0.5F);
+        if (localPose != null) {
+            localPose.transformNormal(LIFT_NORMAL);
+            localPose.transformPosition(LIFT_POS);
+        }
+
+        Pose3d pose = subLevel.logicalPose();
+        double pressure = DimensionPhysicsData.getAirPressure(subLevel.getLevel(), pose.transformPosition(LIFT_POS, TEMP));
+        pose.transformPosition(LIFT_POS, TEMP).sub(pose.position());
+        LIFT_VELO.set(linearVelocity).add(angularVelocity.cross(TEMP, TEMP));
+        pose.transformNormalInverse(LIFT_VELO);
+        LIFT_FORCE.zero();
+        if (dragScalar > 0.0F) {
+            double dragStrength = LIFT_NORMAL.dot(LIFT_VELO) * (double) dragScalar * pressure * timeStep;
+            Vector3d parallelDrag = LIFT_NORMAL.mul(dragStrength, DRAG);
+            LIFT_FORCE.add(parallelDrag);
+            if (group != null) {
+                group.totalDrag().sub(parallelDrag);
+                group.dragCenter().fma(Math.abs(dragStrength), LIFT_POS);
+                group.totalDragStrength += Math.abs(dragStrength);
+            }
+        }
+
+        if (this.sable$getDirectionlessDragScalar() > 0.0F) {
+            double dragStrength = (double)this.sable$getDirectionlessDragScalar() * pressure * timeStep;
+            Vector3d directionlessDrag = LIFT_VELO.mul(dragStrength, TEMP);
+            LIFT_FORCE.add(directionlessDrag);
+            if (group != null) {
+                group.totalDrag().sub(directionlessDrag);
+                group.dragCenter().fma(directionlessDrag.length(), LIFT_POS);
+                group.totalDragStrength += directionlessDrag.length();
+            }
+        }
+
+        linearImpulse.sub(LIFT_FORCE);
+        LIFT_POS.sub(subLevel.getMassTracker().getCenterOfMass(), TEMP);
+        angularImpulse.sub(TEMP.cross(LIFT_FORCE));
+        BlockSubLevelLiftProvider.resetVectors();
     }
 }
