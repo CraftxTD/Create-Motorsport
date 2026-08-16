@@ -2,15 +2,17 @@ package com.createmotorsport.block;
 
 import com.createmotorsport.CreateMotorsport;
 import com.createmotorsport.block.entity.DownFlapBlockEntity;
-import com.createmotorsport.block.entity.SteeringWheelBlockEntity;
 import com.mojang.serialization.MapCodec;
+import com.simibubi.create.content.equipment.extendoGrip.ExtendoGripItem;
 import com.simibubi.create.foundation.placement.PoleHelper;
+import com.simibubi.create.infrastructure.config.AllConfigs;
 import dev.ryanhcode.sable.api.block.BlockSubLevelLiftProvider;
 import dev.ryanhcode.sable.companion.math.Pose3d;
 import dev.ryanhcode.sable.physics.config.dimension_physics.DimensionPhysicsData;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import net.createmod.catnip.placement.IPlacementHelper;
 import net.createmod.catnip.placement.PlacementHelpers;
+import net.createmod.catnip.placement.PlacementOffset;
 import net.minecraft.MethodsReturnNonnullByDefault;
 import net.minecraft.core.Direction;
 import com.simibubi.create.content.equipment.wrench.IWrenchable;
@@ -18,6 +20,8 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.ItemInteractionResult;
+import net.minecraft.world.entity.ai.attributes.AttributeInstance;
+import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
@@ -33,7 +37,6 @@ import net.minecraft.world.level.block.entity.BlockEntityTicker;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
-import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.BooleanProperty;
 import net.minecraft.world.level.block.state.properties.IntegerProperty;
 import net.minecraft.world.phys.BlockHitResult;
@@ -42,23 +45,24 @@ import org.jetbrains.annotations.Nullable;
 import org.joml.Vector3d;
 import org.joml.Vector3dc;
 
-import java.util.ArrayList;
+import java.util.List;
 import java.util.Stack;
 import java.util.function.Predicate;
 
-import static net.minecraft.world.level.block.state.properties.BlockStateProperties.AXIS;
 import static net.minecraft.world.level.block.state.properties.BlockStateProperties.HORIZONTAL_FACING;
 
 public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityBlock, IWrenchable, BlockSubLevelLiftProvider {
    public static final MapCodec<DownFlapBlock> CODEC = simpleCodec(DownFlapBlock::new);
    public static final BooleanProperty PILLAR = BooleanProperty.create("pillar");
+   public static final BooleanProperty LEFT = BooleanProperty.create("left");
+   public static final BooleanProperty RIGHT = BooleanProperty.create("right");
    public static final IntegerProperty FLAP_POWER = IntegerProperty.create("flap_power", 0, 15);
 
     private static final int placementHelperId = PlacementHelpers.register(new DownFlapBlock.PlacementHelper());
 
     public DownFlapBlock(Properties properties) {
         super(properties);
-        registerDefaultState(defaultBlockState().setValue(PILLAR, false).setValue(FLAP_POWER, 0));
+        registerDefaultState(defaultBlockState().setValue(PILLAR, true).setValue(FLAP_POWER, 0).setValue(LEFT, false).setValue(RIGHT, false));
     }
 
     @Override
@@ -73,7 +77,7 @@ public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityB
     }
 
     @Override
-    protected ItemInteractionResult useItemOn(ItemStack stack, BlockState state, Level level, BlockPos pos, Player player, InteractionHand hand, BlockHitResult hitResult) {
+    protected @NotNull ItemInteractionResult useItemOn(ItemStack stack, BlockState state, Level level, BlockPos pos, Player player, InteractionHand hand, BlockHitResult hitResult) {
         IPlacementHelper placementHelper = PlacementHelpers.get(placementHelperId);
         if (!player.isShiftKeyDown() && player.mayBuild()) {
             if (placementHelper.matchesItem(stack))
@@ -106,6 +110,8 @@ public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityB
         if (level.isClientSide) {
             return;
         }
+
+        updateConnection(level, pos, state);
 
         if (state.getValue(PILLAR)) {
             Direction facing = state.getValue(FACING);
@@ -155,6 +161,14 @@ public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityB
         }
     }
 
+    public void updateConnection(Level level, BlockPos pos, BlockState state) {
+        Direction facing = state.getValue(FACING);
+        BlockPos left = pos.relative(facing.getCounterClockWise());
+        BlockPos right = pos.relative(facing.getClockWise());
+        state = state.setValue(LEFT, !(level.getBlockState(left).getBlock() instanceof DownFlapBlock)).setValue(RIGHT, !(level.getBlockState(right).getBlock() instanceof DownFlapBlock));
+        level.setBlock(pos, state, 2);
+    }
+
     @Override
     public boolean canConnectRedstone(BlockState state, BlockGetter world, BlockPos pos, Direction side) {
         if (state.getValue(PILLAR)) {
@@ -165,15 +179,19 @@ public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityB
 
     @Override
     protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder) {
-        builder.add(HORIZONTAL_FACING, PILLAR, FLAP_POWER);
+        builder.add(HORIZONTAL_FACING, PILLAR, FLAP_POWER, LEFT, RIGHT);
     }
 
     @Nullable
     @Override
     public BlockState getStateForPlacement(BlockPlaceContext context) {
-        return defaultBlockState().setValue(HORIZONTAL_FACING, context.getHorizontalDirection().getOpposite());
+        Level level = context.getLevel();
+        BlockPos pos = context.getClickedPos();
+        Direction facing = context.getHorizontalDirection().getOpposite();
+        Boolean left = !(level.getBlockState(pos.relative(facing.getCounterClockWise())).getBlock() instanceof DownFlapBlock);
+        Boolean right = !(level.getBlockState(pos.relative(facing.getClockWise())).getBlock() instanceof DownFlapBlock);
+        return defaultBlockState().setValue(HORIZONTAL_FACING, facing).setValue(LEFT, left).setValue(RIGHT, right);
     }
-
 
     @Nullable
     @Override
@@ -193,6 +211,36 @@ public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityB
         @Override
         public Predicate<ItemStack> getItemPredicate() {
             return stack -> stack.is(CreateMotorsport.DOWN_FLAP_ITEM);
+        }
+
+
+        @Override
+        public PlacementOffset getOffset(Player player, Level world, BlockState state, BlockPos pos, BlockHitResult ray) {
+            List<Direction> directions = IPlacementHelper.orderedByDistance(pos, ray.getLocation(), dir -> dir.getAxis() == axisFunction.apply(state));
+            for (Direction dir : directions) {
+                int range = AllConfigs.server().equipment.placementAssistRange.get();
+                if (player != null) {
+                    AttributeInstance reach = player.getAttribute(Attributes.BLOCK_INTERACTION_RANGE);
+                    if (reach != null && reach.hasModifier(ExtendoGripItem.singleRangeAttributeModifier.id()))
+                        range += 4;
+                }
+                int poles = attachedPoles(world, pos, dir);
+                if (poles >= range)
+                    continue;
+
+                BlockPos newPos = pos.relative(dir, poles + 1);
+                BlockState newState = world.getBlockState(newPos);
+                Direction facing = state.getValue(property);
+                // Inverted compared to #getStateForPlacement
+                Boolean right = !(world.getBlockState(newPos.relative(facing.getClockWise())).getBlock() instanceof DownFlapBlock);
+                Boolean left = !(world.getBlockState(newPos.relative(facing.getCounterClockWise())).getBlock() instanceof DownFlapBlock);
+
+                if (newState.canBeReplaced())
+                    return PlacementOffset.success(newPos, bState -> bState.setValue(property, state.getValue(property)).setValue(PILLAR, false).setValue(LEFT, left).setValue(RIGHT, right));
+
+            }
+
+            return PlacementOffset.fail();
         }
     }
 
