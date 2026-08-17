@@ -234,9 +234,10 @@ public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityB
                 // Inverted compared to #getStateForPlacement
                 Boolean right = !(world.getBlockState(newPos.relative(facing.getClockWise())).getBlock() instanceof DownFlapBlock);
                 Boolean left = !(world.getBlockState(newPos.relative(facing.getCounterClockWise())).getBlock() instanceof DownFlapBlock);
+                int power = world.getBlockState(pos).getValue(FLAP_POWER);
 
                 if (newState.canBeReplaced())
-                    return PlacementOffset.success(newPos, bState -> bState.setValue(property, state.getValue(property)).setValue(PILLAR, false).setValue(LEFT, left).setValue(RIGHT, right));
+                    return PlacementOffset.success(newPos, bState -> bState.setValue(property, state.getValue(property)).setValue(PILLAR, false).setValue(LEFT, left).setValue(RIGHT, right).setValue(FLAP_POWER, power));
 
             }
 
@@ -249,9 +250,10 @@ public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityB
         return state.getValue(FACING);
     }
 
+    // force of the flap at 52.5321°
     @Override
     public float sable$getParallelDragScalar() {
-        return 2.0F;
+        return 1.0F;
     }
 
     @Override
@@ -263,7 +265,8 @@ public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityB
     public void sable$contributeLiftAndDrag(BlockSubLevelLiftProvider.LiftProviderContext ctx, ServerSubLevel subLevel, @NotNull Pose3d localPose, double timeStep, Vector3dc linearVelocity, Vector3dc angularVelocity, Vector3d linearImpulse, Vector3d angularImpulse, @Nullable BlockSubLevelLiftProvider.LiftProviderGroup group) {
         BlockSubLevelLiftProvider.resetVectors();
         BlockState state = ctx.state();
-        float dragScalar = (float) state.getValue(DownFlapBlock.FLAP_POWER) / 15 * this.sable$getParallelDragScalar();
+        float angle = (float) state.getValue(DownFlapBlock.FLAP_POWER) / 30 * (float) Math.PI;
+        float dragScalar = (float) (this.sable$getParallelDragScalar() * Math.sin(angle) * (1 - Math.cos(2 * angle)));
 
         LIFT_NORMAL.set(ctx.dir().x(), ctx.dir().y(), ctx.dir().z());
         LIFT_POS.set((double)ctx.pos().getX() + (double)0.5F, (double) ctx.pos().getY() + (double)0.5F, (double) ctx.pos().getZ() + (double)0.5F);
