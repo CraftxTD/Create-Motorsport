@@ -3,6 +3,7 @@ package com.createmotorsport;
 import com.createmotorsport.client.DownFlapRenderer;
 import com.createmotorsport.client.EngineScreen;
 import com.createmotorsport.client.MotorsportCommands;
+import com.createmotorsport.client.MotorsportKeybinds;
 import com.createmotorsport.client.MotorsportPartialModels;
 import com.createmotorsport.client.SteeringInputHandler;
 import com.createmotorsport.client.SteeringWheelScreen;
@@ -25,13 +26,16 @@ public class CreateMotorsportClient {
         MotorsportPartialModels.init();
         modEventBus.addListener(this::registerMenuScreens);
         modEventBus.addListener(this::registerRenderers);
+        modEventBus.addListener(MotorsportKeybinds::register);
         container.registerExtensionPoint(IConfigScreenFactory.class, ConfigurationScreen::new);
 
         // Steering wheel live input intercepts keys and streams the driver's controls
         NeoForge.EVENT_BUS.addListener(SteeringInputHandler::onKeyInput);
         NeoForge.EVENT_BUS.addListener(SteeringInputHandler::onClientTick);
         NeoForge.EVENT_BUS.addListener(SteeringInputHandler::onScreenOpening);
+        NeoForge.EVENT_BUS.addListener(com.createmotorsport.client.MouseSteerCamera::onCameraAngles);
         NeoForge.EVENT_BUS.addListener(MotorsportCommands::register);
+        NeoForge.EVENT_BUS.addListener(com.createmotorsport.client.MotorsportHud::onRenderGui);
     }
 
     private void registerMenuScreens(RegisterMenuScreensEvent event) {

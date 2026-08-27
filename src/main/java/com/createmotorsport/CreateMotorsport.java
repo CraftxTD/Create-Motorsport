@@ -12,11 +12,13 @@ import com.createmotorsport.item.SuspensionWrenchItem;
 import com.createmotorsport.menu.EngineMenu;
 import com.createmotorsport.menu.SteeringWheelMenu;
 import com.createmotorsport.menu.SuspensionMenu;
+import com.createmotorsport.network.AdjustLiftPacket;
 import com.createmotorsport.network.SetDriveModePacket;
 import com.createmotorsport.network.SetDrivingPacket;
 import com.createmotorsport.network.SetSteeringKeyPacket;
 import com.createmotorsport.network.StartTelemetryLogPacket;
 import com.createmotorsport.network.ToggleAxleEndPacket;
+import com.createmotorsport.network.ToggleEngineDirectionPacket;
 import com.createmotorsport.network.SteeringInputPacket;
 import com.createmotorsport.network.TelemetryLinePacket;
 import com.mojang.logging.LogUtils;
@@ -33,7 +35,6 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.sounds.SoundEvent;
-import net.minecraft.world.flag.FeatureFlags;
 import net.minecraft.world.inventory.MenuType;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.CreativeModeTab;
@@ -121,9 +122,9 @@ public class CreateMotorsport {
                     .noOcclusion()
                     .requiresCorrectToolForDrops())
     );
-    public static final DeferredItem<BlockItem> SUSPENSION_ITEM = ITEMS.registerSimpleBlockItem(
+    public static final DeferredItem<com.createmotorsport.item.SuspensionBlockItem> SUSPENSION_ITEM = ITEMS.register(
             "suspension",
-            SUSPENSION
+            () -> new com.createmotorsport.item.SuspensionBlockItem(SUSPENSION.get(), new Item.Properties())
     );
     public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<EngineBlockEntity>> ENGINE_BLOCK_ENTITY =
             BLOCK_ENTITY_TYPES.register("engine_block", () -> BlockEntityType.Builder.of(
@@ -172,7 +173,7 @@ public class CreateMotorsport {
 
     public static final DeferredHolder<MenuType<?>, MenuType<EngineMenu>> ENGINE_MENU = MENUS.register(
             "engine",
-            () -> new MenuType<>(EngineMenu::new, FeatureFlags.VANILLA_SET)
+            () -> IMenuTypeExtension.create((id, inv, buf) -> new EngineMenu(id, inv, buf.readBlockPos()))
     );
     public static final DeferredHolder<MenuType<?>, MenuType<SuspensionMenu>> SUSPENSION_MENU = MENUS.register(
             "suspension",
@@ -243,6 +244,9 @@ public class CreateMotorsport {
         registrar.playToServer(StartTelemetryLogPacket.TYPE, StartTelemetryLogPacket.CODEC, StartTelemetryLogPacket::handle);
         registrar.playToServer(SetDriveModePacket.TYPE, SetDriveModePacket.CODEC, SetDriveModePacket::handle);
         registrar.playToServer(ToggleAxleEndPacket.TYPE, ToggleAxleEndPacket.CODEC, ToggleAxleEndPacket::handle);
+        registrar.playToServer(AdjustLiftPacket.TYPE, AdjustLiftPacket.CODEC, AdjustLiftPacket::handle);
+        registrar.playToServer(ToggleEngineDirectionPacket.TYPE, ToggleEngineDirectionPacket.CODEC,
+                ToggleEngineDirectionPacket::handle);
         registrar.playToClient(TelemetryLinePacket.TYPE, TelemetryLinePacket.CODEC, TelemetryLinePacket::handle);
     }
 
@@ -252,7 +256,8 @@ public class CreateMotorsport {
         float designLoad = (float) (midpointKg * 9.81 / 4.0);
         return ITEMS.register(name, () -> new Item(new Item.Properties()
                 .stacksTo(16)
-                .component(OffroadDataComponents.TIRE, new TireLike(12.0f / 16.0f))
+                .component(OffroadDataComponents.TIRE, new TireLike(12.0f / 16.0f,
+                        net.minecraft.world.phys.Vec3.ZERO, net.minecraft.world.phys.Vec3.ZERO, (ResourceLocation) null))
                 .component(TIRE_DESIGN_LOAD, designLoad)));
     }
 

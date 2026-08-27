@@ -34,11 +34,16 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.core.NonNullList;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.core.particles.BlockParticleOption;
+import net.minecraft.core.particles.ParticleOptions;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.ContainerHelper;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
@@ -54,21 +59,42 @@ import software.bernie.geckolib.animatable.instance.AnimatableInstanceCache;
 import software.bernie.geckolib.animation.AnimatableManager;
 import software.bernie.geckolib.animation.AnimationController;
 import software.bernie.geckolib.animation.PlayState;
-import software.bernie.geckolib.animation.RawAnimation;
 import software.bernie.geckolib.util.GeckoLibUtil;
 
 import java.util.Collection;
 import java.util.List;
 
 public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEntitySubLevelActor, GeoBlockEntity {
-    public static final double REST_LENGTH = 7.0 / 16.0;
+    public static final double REST_LENGTH = 3.5 / 16.0;
+    private static final double TRACK_HALF_WIDTH = 25.0 / 16.0;
     public static final double MAX_TRAVEL = 0.25;
     public static final double MAX_DROOP_RENDER = 0.15;
-    private static final double MAX_STEER_RAD = Math.toRadians(32.0);
     private static final double GROUND_MARGIN = 0.15;
     private static final int SYNC_INTERVAL_TICKS = 2;
 
-    // Server-side regitries for engine lookup and batched force flushing
+    // User selected "lift height" on the suspension block menu. Mostly a temporary solution for offroading
+    // 8 is the steps of normal lift height, where going up to 24 goes past where the animation looks like it should allow
+    public static final double MAX_LIFT = MAX_TRAVEL + MAX_DROOP_RENDER;
+    public static final int LIFT_STEPS = 8;
+    public static final int MAX_LIFT_STEPS = 24;
+    public static final double LIFT_STEP_HEIGHT = MAX_LIFT / LIFT_STEPS;
+
+    // Thermal model (Speed Dreams speedcoolm)
+    private static final double TIRE_SPEED_COOL = 0.25;
+
+    // Tire smoke tuning
+    private static final double SMOKE_HEAT_COLD_C = 60.0; // no smoke boost at/below this temp
+    private static final double SMOKE_HEAT_HOT_C = 130.0; // full smoke boost at/above this
+    private static final double SMOKE_DRIFT_SPEED = 0.09;
+    private static final double SMOKE_CLOUD_LEAN = 1.6;
+    private static final double SMOKE_CENTER_HEIGHT = 0.45;
+    private static final double SMOKE_H_SPREAD_RADIUS = 0.55;
+    private static final double SMOKE_H_SPREAD_BASE = 0.22;
+    private static final double SMOKE_V_SPREAD_RADIUS = 0.7;
+    private static final double SMOKE_DRIFT_MAX = 0.05;
+    private static final int SMOKE_MAX_PUFFS = 32;
+
+    // Server-side registries for engine lookup and batched force flushing
     private static final Collection<SuspensionBlockEntity> LOADED = new ObjectOpenHashSet<>();
     private static final Collection<SuspensionBlockEntity> QUEUED = new ObjectOpenHashSet<>();
 
@@ -135,14 +161,27 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         double telemCompression;
         double telemBrakeTorque;
         double telemGripMult = 1.0;
+        double telemPeakMu = 1.0;
         double prevLongForce; // last longitudinal tire force, for the relaxation low-pass
+        double deflAlpha;     // lateral contact-patch deflection in (m), fiala lateral relaxation state
+        double latBristle;    // lateral bristle deflection in (m), TMeasy dahl stand-still model
+        double tireTemp = 20.0; // tire temperature (deg C), thermal model
+
+        // tire smoke
+        double smokeSeverity;
+        double smokeX, smokeY, smokeZ;
+        double smokeVx, smokeVy, smokeVz;
+        double smokeRadius = 0.5;
+        double smokeAccum;
+        BlockState smokeSurface;
     }
 
     // snapshot of a wheel's last physics step, for csv logging
     public record WheelTelemetry(boolean grounded, double loadN, double slipRatio, double slipAngleDeg,
                                  double vLonMs, double vLatMs, double longForceN, double latForceN,
                                  double omega, double wheelSpeedMs, double springLenM, double compressionM,
-                                 double surfaceMu, double brakeTorqueNm, double gripMult, double driveTorqueNm) {
+                                 double surfaceMu, double brakeTorqueNm, double gripMult, double driveTorqueNm,
+                                 double tireTempC) {
     }
 
     public WheelTelemetry getTelemetry(WheelSide side) {
@@ -150,7 +189,8 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         return new WheelTelemetry(w.grounded, w.telemLoad, w.telemSlipRatio,
                 Math.toDegrees(w.telemSlipAngleRad), w.telemVLon, w.telemVLat, w.telemLongForce,
                 w.telemLatForce, w.omega, w.telemWheelSpeed, w.springLength, w.telemCompression,
-                w.surfaceMu * w.telemGripMult, w.telemBrakeTorque, w.telemGripMult, driveTorquePerWheel);
+                w.surfaceMu * w.telemGripMult, w.telemBrakeTorque, w.telemGripMult, driveTorquePerWheel,
+                w.tireTemp);
     }
 
 
@@ -218,15 +258,14 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
     private double lastChasingSteer;
     private int syncCooldown;
     private boolean syncDirty;
+    private int liftSteps;
+    private boolean driftDiffMode;
 
     // defaults to rear axle, which means the user does need to change the other to 'front' for now, will fix later
     private boolean frontAxle;
 
-    // geckolib clips from blockbench
-    private static final RawAnimation AXLE_ROTATION = RawAnimation.begin().thenLoop("axle_rotation");
-    private static final RawAnimation AXLE_ROTATION_REVERSE = RawAnimation.begin().thenLoop("axle_rotation_reverse");
-    private static final RawAnimation LEFT_SUSPENSION = RawAnimation.begin().thenLoop("left_suspension");
-    private static final RawAnimation RIGHT_SUSPENSION = RawAnimation.begin().thenLoop("right_suspension");
+
+
     private final AnimatableInstanceCache animationCache = GeckoLibUtil.createInstanceCache(this);
 
     public SuspensionBlockEntity(BlockPos pos, BlockState state) {
@@ -253,39 +292,12 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
 
     @Override
     public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
-        // wheel spin
-        controllers.add(new AnimationController<>(this, "axle", 0, state -> {
-            float speed = getWheelAnimationSpeed();
-            if (Math.abs(speed) <= 0.001F) {
-                state.setControllerSpeed(0.0F);
-                return state.setAndContinue(AXLE_ROTATION);
-            }
-            state.setControllerSpeed(Math.abs(speed));
-            return state.setAndContinue(speed < 0.0F ? AXLE_ROTATION_REVERSE : AXLE_ROTATION);
-        }));
-        // wishbone bob on each side
-        controllers.add(new AnimationController<>(this, "left_suspension", 0, state ->
-                isSuspensionMoving(WheelSide.LEFT) ? state.setAndContinue(LEFT_SUSPENSION) : PlayState.STOP));
-        controllers.add(new AnimationController<>(this, "right_suspension", 0, state ->
-                isSuspensionMoving(WheelSide.RIGHT) ? state.setAndContinue(RIGHT_SUSPENSION) : PlayState.STOP));
+        controllers.add(new AnimationController<>(this, "idle", 0, state -> PlayState.STOP));
     }
 
     @Override
     public AnimatableInstanceCache getAnimatableInstanceCache() {
         return animationCache;
-    }
-
-    // animation speed derived from average synced wheel angular velocity
-    private float getWheelAnimationSpeed() {
-        double avgOmega = 0.5 * (leftWheel.syncedOmega + rightWheel.syncedOmega);
-        return (float) (avgOmega / (2.0 * Math.PI));
-    }
-
-    private static final double SUSPENSION_BUMP_RATE = 0.03;
-
-    private boolean isSuspensionMoving(WheelSide side) {
-        WheelState w = getWheel(side);
-        return hasTire(side) && Math.abs(w.clientSpringLength - w.lastClientSpringLength) > SUSPENSION_BUMP_RATE;
     }
 
     // =======================================
@@ -337,6 +349,37 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         sendData();
     }
 
+    public int getLiftSteps() {
+        return liftSteps;
+    }
+
+    public double liftHeight() {
+        return liftSteps * LIFT_STEP_HEIGHT;
+    }
+
+    private double animatedLiftHeight() {
+        return Math.min(liftSteps, LIFT_STEPS) * LIFT_STEP_HEIGHT;
+    }
+
+    // Lift beyond the animation
+    public double breakawayDrop() {
+        return liftHeight() - animatedLiftHeight();
+    }
+
+    private double restLength() {
+        return REST_LENGTH + liftHeight();
+    }
+
+    // user clicking the menu
+    public void adjustLift(int delta) {
+        if (level == null || level.isClientSide) {
+            return;
+        }
+        liftSteps = Mth.clamp(liftSteps + delta, 0, MAX_LIFT_STEPS);
+        setChanged();
+        sendData();
+    }
+
     public void setDriverSteering(double steer, double brake) {
         if (level == null || level.isClientSide) {
             return;
@@ -344,6 +387,16 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         driverSteer = Mth.clamp(steer, -15.0, 15.0);
         driverBrake = Mth.clamp(brake, 0.0, 15.0);
         driverControlTime = level.getGameTime();
+    }
+
+    // drifting mode set by driver that changes differential settings
+    public void setDriftDiffMode(boolean drift) {
+        driftDiffMode = drift;
+    }
+
+    // peak Mu for the HUD grip readout
+    public double getPeakMu(WheelSide side) {
+        return getWheel(side).telemPeakMu;
     }
 
     private boolean driverActive() {
@@ -525,7 +578,7 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         brake01 = newBrake;
 
         lastChasingSteer = chasingSteer;
-        chasingSteer = Mth.lerp(0.4, chasingSteer, steerSignal / 15.0 * MAX_STEER_RAD * speedSteerLock());
+        chasingSteer = Mth.lerp(0.4, chasingSteer, steerSignal / 15.0 * Math.toRadians(Config.STEERING_MAX_DEGREES.getAsDouble()) * speedSteerLock());
 
 
         // torque stops when engine stops ticking
@@ -545,6 +598,44 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
             }
             sendData();
         }
+
+        if (level instanceof ServerLevel serverLevel) {
+            emitTireSmoke(serverLevel, leftWheel);
+            emitTireSmoke(serverLevel, rightWheel);
+        }
+    }
+
+    private void emitTireSmoke(ServerLevel serverLevel, WheelState wheel) {
+        if (wheel.smokeSeverity <= 0.0) {
+            wheel.smokeAccum = 0.0;
+            return;
+        }
+        wheel.smokeAccum += wheel.smokeSeverity * Config.TIRE_SMOKE_DENSITY.getAsDouble();
+        int puffs = (int) wheel.smokeAccum;
+        if (puffs <= 0) {
+            return;
+        }
+        wheel.smokeAccum -= puffs;
+        puffs = Math.min(puffs, SMOKE_MAX_PUFFS);
+
+        ParticleOptions particle = smokeParticleFor(wheel.smokeSurface);
+        double r = wheel.smokeRadius;
+        double cx = wheel.smokeX + wheel.smokeVx * SMOKE_CLOUD_LEAN;
+        double cy = wheel.smokeY + r * SMOKE_CENTER_HEIGHT;
+        double cz = wheel.smokeZ + wheel.smokeVz * SMOKE_CLOUD_LEAN;
+        double hSpread = r * SMOKE_H_SPREAD_RADIUS + SMOKE_H_SPREAD_BASE;
+        double vSpread = r * SMOKE_V_SPREAD_RADIUS + 0.05;
+        serverLevel.sendParticles(particle, cx, cy, cz, puffs, hSpread, vSpread, hSpread, SMOKE_DRIFT_MAX);
+    }
+
+    // Will improve this later to be more data driven but for now this detects some surfaces to kick up dirt instead of smoke the tire
+    private ParticleOptions smokeParticleFor(BlockState surface) {
+        if (surface != null && Config.TIRE_SMOKE_GROUND_DUST.get()
+                && (surface.is(BlockTags.DIRT) || surface.is(BlockTags.SAND) || surface.is(BlockTags.SNOW)
+                    || surface.is(Blocks.GRAVEL))) {
+            return new BlockParticleOption(ParticleTypes.BLOCK, surface);
+        }
+        return ParticleTypes.CAMPFIRE_COSY_SMOKE;
     }
 
     private boolean wheelStateChangedEnough() {
@@ -568,7 +659,7 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
 
     private void clientTick() {
         lastChasingSteer = chasingSteer;
-        chasingSteer = Mth.lerp(0.4, chasingSteer, steerSignal / 15.0 * MAX_STEER_RAD * speedSteerLock());
+        chasingSteer = Mth.lerp(0.4, chasingSteer, steerSignal / 15.0 * Math.toRadians(Config.STEERING_MAX_DEGREES.getAsDouble()) * speedSteerLock());
         for (WheelSide side : WheelSide.values()) {
             WheelState w = getWheel(side);
             w.lastAngle = w.angle;
@@ -613,7 +704,8 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         if (!hasTire(WheelSide.LEFT) || !hasTire(WheelSide.RIGHT)) {
             return;
         }
-        double antiSlip = Config.DIFFERENTIAL_ANTISLIP_TORQUE.getAsDouble();
+        double antiSlip = (driftDiffMode ? Config.DIFFERENTIAL_ANTISLIP_DRIFT : Config.DIFFERENTIAL_ANTISLIP_TORQUE)
+                .getAsDouble();
         if (antiSlip <= 0.0) {
             return;
         }
@@ -633,7 +725,12 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
     private double wheelInertia(WheelSide side) {
         TireLike tire = getTire(side).get(OffroadDataComponents.TIRE);
         double radius = tire != null ? tire.radius() : REST_LENGTH;
-        return Math.max(0.5, 5.0 * radius * radius * radius * radius);
+        return wheelInertia(radius);
+    }
+
+    // I = m*r^2
+    private static double wheelInertia(double radius) {
+        return Math.max(0.5, Config.WHEEL_MASS.getAsDouble() * radius * radius);
     }
 
     private boolean stepWheel(WheelSide side, Pose3d pose, MassData massData, double dt) {
@@ -641,35 +738,37 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         TireLike tire = getTire(side).get(OffroadDataComponents.TIRE);
         if (tire == null) {
             wheel.grounded = false;
-            wheel.springLength = Mth.lerp(0.5, wheel.springLength, REST_LENGTH);
+            wheel.springLength = Mth.lerp(0.5, wheel.springLength, restLength());
             return false;
         }
 
         double radius = tire.radius();
         Direction facing = getFacing();
         Direction sideDir = getSideDirection(side);
-        Vec3 hardpoint = worldPosition.relative(sideDir).getCenter();
+        Vec3 hardpoint = Vec3.atCenterOf(worldPosition)
+                .add(sideDir.getStepX() * TRACK_HALF_WIDTH, 0.0, sideDir.getStepZ() * TRACK_HALF_WIDTH);
         Vector3d hardpointJoml = JOMLConversion.toJOML(hardpoint);
 
-        // steering
-        Vector3d forward = new Vector3d(facing.getStepX(), 0.0, facing.getStepZ()).rotateY(chasingSteer);
+        // Ackermann geometry on the steering now, so the outer and inner wheels have to take their own angles (see wheelSteerAngle)
+        double wheelSteer = wheelSteerAngle(chasingSteer, side);
+        Vector3d forward = new Vector3d(facing.getStepX(), 0.0, facing.getStepZ()).rotateY(wheelSteer);
         Direction rightDir = facing.getClockWise();
-        Vector3d axle = new Vector3d(rightDir.getStepX(), 0.0, rightDir.getStepZ()).rotateY(chasingSteer);
+        Vector3d axle = new Vector3d(rightDir.getStepX(), 0.0, rightDir.getStepZ()).rotateY(wheelSteer);
 
         TerrainCastResult cast = castToTerrain(hardpoint, forward, pose);
         double distance = cast.distance();
-        boolean grounded = distance <= REST_LENGTH + radius + GROUND_MARGIN;
+        boolean grounded = distance <= restLength() + radius + GROUND_MARGIN;
         wheel.grounded = grounded;
         wheel.surfaceMu = cast.hitBlock() != null
                 ? fudgeFriction(PhysicsBlockPropertyHelper.getFriction(level.getBlockState(cast.hitBlock())))
                 : 1.0;
 
-        double wheelInertia = Math.max(0.5, 5.0 * radius * radius * radius * radius);
-        double brakeTorque = brake01 * 2000.0 * radius;
+        double wheelInertia = wheelInertia(radius);
+        double brakeTorque = brake01 * Config.BRAKE_STRENGTH.getAsDouble() * radius;
 
         if (!grounded) {
-            wheel.springLength = Mth.clamp(Mth.lerp(0.4, wheel.springLength, REST_LENGTH + MAX_DROOP_RENDER),
-                    REST_LENGTH - MAX_TRAVEL, REST_LENGTH + MAX_DROOP_RENDER);
+            wheel.springLength = Mth.clamp(Mth.lerp(0.4, wheel.springLength, restLength() + MAX_DROOP_RENDER),
+                    restLength() - MAX_TRAVEL, restLength() + MAX_DROOP_RENDER);
             wheel.omega = TireModel.integrateSpin(wheel.omega, radius, wheelInertia, driveTorquePerWheel,
                     brakeTorque, 0.0, wheel.omega * radius, dt) * 0.995;
             wheel.telemLoad = 0.0;
@@ -682,11 +781,12 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
             wheel.telemCompression = 0.0;
             wheel.telemBrakeTorque = brakeTorque;
             wheel.telemWheelSpeed = wheel.omega * radius;
+            wheel.smokeSeverity = 0.0;
             return false;
         }
 
-        wheel.springLength = Mth.clamp(distance - radius, REST_LENGTH - MAX_TRAVEL, REST_LENGTH + MAX_DROOP_RENDER);
-        double compression = Math.max(0.0, REST_LENGTH - wheel.springLength);
+        wheel.springLength = Mth.clamp(distance - radius, restLength() - MAX_TRAVEL, restLength() + MAX_DROOP_RENDER);
+        double compression = Math.max(0.0, restLength() - wheel.springLength);
 
         // mass per corner, Sable gives the exact jacobian denominator
         double invNormalMass = massData.getInverseNormalMass(hardpointJoml, OrientedBoundingBox3d.UP);
@@ -718,6 +818,14 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         Vector3d springImpulse = new Vector3d(hitNormal).mul(springForce * dt);
         forceTotal.applyImpulseAtPoint(massData, hardpointJoml, springImpulse);
 
+
+        // DOWNFORCE -- so add onto this with the spoilers or wings. This is just user configured for now to apply 0.06 by default for test drive purposes
+        double airspeed = localVelocity.length();
+        double downforce = Config.AERO_DOWNFORCE.getAsDouble() * airspeed * airspeed;
+        if (downforce > 0.0) {
+            forceTotal.applyImpulseAtPoint(massData, hardpointJoml, new Vector3d(0.0, -downforce * dt, 0.0));
+        }
+
         // ================================
         // Load sensitive tire friction
         // ===================================
@@ -726,25 +834,98 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         double vLat = localVelocity.dot(axle);
 
 
+        // ABS releases brake pressure on a wheel when the braking slip passes a threshold toward locking up,
+        // Proportional release and a default floor of 5%, disengages below 1.5m/s
+        if (brakeTorque > 0.0 && Config.ABS_ENABLED.get() && Math.abs(vLon) > Config.ABS_MIN_SPEED.getAsDouble()) {
+            double lockSlip = -(wheel.omega * radius - vLon) * Math.signum(vLon) / Math.max(Math.abs(vLon), 2.0);
+            double threshold = Config.ABS_SLIP_THRESHOLD.getAsDouble();
+            if (lockSlip > threshold) {
+                brakeTorque *= Mth.clamp(1.0 - (lockSlip - threshold) / threshold, 0.05, 1.0);
+            }
+        }
+
         // per-axle tire tier so front grips better than rear, should help the turning be more natural
-        TireSpec tireSpec = isFrontAxle() ? TireSpec.RACING_SLICK_FRONT : TireSpec.RACING_SLICK_REAR;
+        TireSpec tireSpec = TireSpec.fromConfig(isFrontAxle());
 
         float designLoad = getTire(side).getOrDefault(CreateMotorsport.TIRE_DESIGN_LOAD, 0.0f);
         double gripMult = TireModel.loadSensitivity(normalForce, designLoad, tireSpec);
-        double effectiveMu = wheel.surfaceMu * gripMult;
+
+        // Thermal grip parabola peaks at optimal temp. From Speed Dreams: mu *= 1 - k*(T-Topt)^2
+        // k is set so grip = coldGripFactor at ambient, factor 1.0 would be off
+        double tempFactor = 1.0;
+        if (Config.TIRE_THERMAL_MODEL.get()) {
+            double topt = Config.TIRE_OPT_TEMP.getAsDouble();
+            double span = topt - Config.TIRE_AMBIENT_TEMP.getAsDouble();
+            double k = span != 0.0 ? (1.0 - Config.COLD_MU_FACTOR.getAsDouble()) / (span * span) : 0.0;
+            double dT = wheel.tireTemp - topt;
+            tempFactor = Mth.clamp(1.0 - k * dT * dT, 0.1, 1.0);
+        }
+        double effectiveMu = wheel.surfaceMu * gripMult * tempFactor;
         wheel.telemGripMult = gripMult;
+        wheel.telemPeakMu = effectiveMu * tireSpec.grip(); // peak grip the tire can deliver right now
 
         // non driving or braked wheels take from offroad wheel mount, just track ground so it cant start creating slip force and maybe wont roll as much
         boolean powered = Math.abs(driveTorquePerWheel) > 1.0e-3 || brakeTorque > 1.0e-3;
         double forwardImpulse;
         double sideImpulse;
 
-        if (Config.SIM_TIRE_MODEL.get()) {
+        int tireModel = Config.TIRE_MODEL.getAsInt();
 
-            // ------ TOGGLEABLE "SIM" mode for tires --------------------------------
-            // If the driving mode is set to "Racing Sim" instead of "Arcade", then this is the section that takes
-            // one combined slip force split between longitudinal and lateral, so any grip spent accelerating or braking is taken away from cornering
-            // this lets the car break away and spin
+        if (tireModel == 3) {
+
+            // --------------------------------------------------------------------------
+            // FIALA BRUSH TIRE MODEL 3
+            // Ported from Project Chrono
+
+            if (!powered) {
+                wheel.omega = vLon / radius;
+            }
+            double wheelSpeed = wheel.omega * radius;
+            double vRef = Math.max(Math.abs(vLon), Config.SIM_LOWSPEED_REF.getAsDouble());
+            double kappa = (wheelSpeed - vLon) / vRef;
+            double relaxLen = Math.max(Config.FIALA_RELAX_LENGTH.getAsDouble(), 1.0e-3);
+            double decayRate = vRef / relaxLen;
+            double decay = Math.exp(-decayRate * dt);
+            double tauEff = decayRate > 1.0e-9 ? (1.0 - decay) / decayRate : dt;
+            wheel.deflAlpha = wheel.deflAlpha * decay + vLat * tauEff;
+            double alpha = Math.atan2(wheel.deflAlpha, relaxLen);
+
+            double frictionScale = effectiveMu * tireSpec.grip();
+            double[] fiala = new double[2];
+            TireModel.fialaForces(fiala, kappa, alpha, normalForce,
+                    Config.FIALA_CSLIP.getAsDouble(), Config.FIALA_CALPHA.getAsDouble(),
+                    Config.FIALA_MU_MAX.getAsDouble(), Config.FIALA_MU_MIN.getAsDouble(), frictionScale);
+            double forwardForce = fiala[0];
+            double lateralForce = fiala[1];
+
+            if (!powered) {
+                forwardForce = -TireModel.rollingResistance(normalForce, vLon);
+            }
+            forwardForce = wheel.prevLongForce + (forwardForce - wheel.prevLongForce) * Config.TIRE_FORCE_RELAXATION.getAsDouble();
+            wheel.prevLongForce = forwardForce;
+
+            // low speed stabilizer because it is very jittery as of now
+            double speed = Math.sqrt(vLon * vLon + vLat * vLat);
+            double blendSpeed = Config.SIM_LOWSPEED_BLEND_MS.getAsDouble();
+            double invSideMass = massData.getInverseNormalMass(hardpointJoml, axle);
+            if (blendSpeed > 1.0e-6) {
+                double slipBlend = Mth.clamp(speed / blendSpeed, 0.0, 1.0);
+                double cancelForce = invSideMass > 1.0e-9 ? (-vLat / invSideMass * Config.LATERAL_GRIP_FRACTION.getAsDouble()) / dt : 0.0;
+                lateralForce = Mth.lerp(slipBlend, cancelForce, lateralForce);
+            }
+
+            forwardImpulse = forwardForce * dt;
+            sideImpulse = lateralForce * dt;
+
+            if (powered) {
+                wheel.omega = TireModel.integrateSpin(wheel.omega, radius, wheelInertia, driveTorquePerWheel,
+                        brakeTorque, forwardForce, vLon, dt);
+            }
+        } else if (tireModel == 2) {
+
+            //-----------------------------------------------------------------------------------
+            // PACEJKA COMBINED-SLIP TIRE MODEL 2
+
 
             if (!powered) {
                 wheel.omega = vLon / radius;
@@ -774,7 +955,6 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
             forwardForce = wheel.prevLongForce + (forwardForce - wheel.prevLongForce) * Config.TIRE_FORCE_RELAXATION.getAsDouble();
             wheel.prevLongForce = forwardForce;
 
-
             // low speed blending to make it stabilize and not jitter
             double speed = Math.sqrt(vLon * vLon + vLat * vLat);
             double slipBlend = Mth.clamp(speed / Config.SIM_LOWSPEED_BLEND_MS.getAsDouble(), 0.0, 1.0);
@@ -789,9 +969,105 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
                 wheel.omega = TireModel.integrateSpin(wheel.omega, radius, wheelInertia, driveTorquePerWheel,
                         brakeTorque, forwardForce, vLon, dt);
             }
+        } else if (tireModel == 4) {
+
+            // --------------------------------------------------------------------------------
+            // TMEASY TIRE MODEL 4 (Rill), ported from Project Chrono's ChTMeasyTire
+            // See TireModel as well for more notes copied from source
+
+            if (!powered) {
+                wheel.omega = vLon / radius;
+            }
+            double wheelSpeed = wheel.omega * radius;
+
+            // Slip inputs, this part is from Chrono's ChTMeasyTire 'Synchronize', covering the slip inputs and configurable
+            // transport speed floor. Chrono used a tiny vnum of like 0.01 but due to our physics substeps this should be more like 1
+            double vta = Math.max(Math.abs(wheelSpeed), Config.SIM_LOWSPEED_REF.getAsDouble());
+            double sx = (wheelSpeed - vLon) / vta;
+            double sy = -vLat / vta;
+
+            // Chrono uses data driven tire inputs, instead we have estimatable values, inspired by a paper Dr. Rill wrote,
+            // titled: "An Engineer's Guess on Tyre Model Parameter Made Possible with Tmeasy"
+            double peakForce = normalForce * effectiveMu * tireSpec.grip();
+            double slideFrac = Config.TMEASY_SLIDE_GRIP.getAsDouble();
+            double fxm = peakForce, fym = peakForce;
+            double fxs = slideFrac * peakForce, fys = slideFrac * peakForce;
+            double sxm = Config.TMEASY_SLIP_PEAK_LONG.getAsDouble();
+            double sym = Config.TMEASY_SLIP_PEAK_LAT.getAsDouble();
+            double slideSlip = Config.TMEASY_SLIDE_SLIP_FACTOR.getAsDouble();
+            double sxs = sxm * slideSlip, sys = sym * slideSlip;
+            double stiffMult = Config.TMEASY_INITIAL_STIFFNESS.getAsDouble();
+            double dfx0 = stiffMult * fxm / sxm, dfy0 = stiffMult * fym / sym;
+
+            // This part also deviates a bit from Chrono because I was reading Dr. Rill's textbook, and wanted to try
+            // the refinement he suggests, its a combined slip normalization found in equations 3.129 - 3.140
+            // intended to rescale the two slip values (throttle/steer) so they are more comparable for a combined slip model
+            double fOverDf0X = fxm / dfx0;
+            double fOverDf0Y = fym / dfy0;
+            double shatX = sxm / (sxm + sym) + fOverDf0X / (fOverDf0X + fOverDf0Y);
+            double shatY = sym / (sxm + sym) + fOverDf0Y / (fOverDf0X + fOverDf0Y);
+            double sNx = sx / shatX;
+            double sNy = sy / shatY;
+            double sc = Math.hypot(sNx, sNy);
+            double cphi = sc > 1.0e-9 ? sNx / sc : Math.sqrt(0.5);
+            double sphi = sc > 1.0e-9 ? sNy / sc : Math.sqrt(0.5);
+            double df0 = Math.hypot(dfx0 * shatX * cphi, dfy0 * shatY * sphi);
+            double fm = Math.hypot(fxm * cphi, fym * sphi);
+            double sm = Math.hypot(sxm / shatX * cphi, sym / shatY * sphi);
+            double fs = Math.hypot(fxs * cphi, fys * sphi);
+            double ss = Math.hypot(sxs / shatX * cphi, sys / shatY * sphi);
+            double[] tm = new double[2];
+
+            // this part is from Chrono's ChTMeasyTire 'Advanced' & 'tmxy_combined'
+            TireModel.tmeasyCombined(tm, sc, df0, sm, fm, ss, fs);
+            double f = tm[0];
+            double forwardForce = sc > 1.0e-9 ? f * cphi : 0.0;
+            double lateralForce = sc > 1.0e-9 ? f * sphi : 0.0;
+
+            if (!powered) {
+                forwardForce = -TireModel.rollingResistance(normalForce, vLon);
+            }
+            forwardForce = wheel.prevLongForce + (forwardForce - wheel.prevLongForce) * Config.TIRE_FORCE_RELAXATION.getAsDouble();
+            wheel.prevLongForce = forwardForce;
+
+            // This part is Chrono's ChTMeasyTire  'CombinedCoulombForces', which is TMeasy's own Dahl bristle stand-still model
+            double relaxLen = Math.max(Config.FIALA_RELAX_LENGTH.getAsDouble(), 1.0e-3);
+            double fc = fym;
+            double fyBristle;
+            if (fc > 1.0e-6) {
+                double sigma0 = fc / relaxLen;
+                double invSideMass = massData.getInverseNormalMass(hardpointJoml, axle);
+                double effMass = invSideMass > 1.0e-9 ? 1.0 / invSideMass : 1.0;
+                double sigma1 = Config.TMEASY_BRISTLE_DAMPING.getAsDouble() * 2.0 * Math.sqrt(sigma0 * effMass);
+                double vWash = Math.max(Math.abs(vLat), Config.TMEASY_STANDSTILL_LEAK.getAsDouble());
+                double bry = wheel.latBristle;
+                double bryDot = vLat - sigma0 * bry * vWash / fc;
+                fyBristle = -(sigma0 * bry + sigma1 * bryDot);
+                // implicit BDF1 update of the bristle deflection (unconditionally stable)
+                wheel.latBristle = (fc * bry + fc * dt * vLat) / (fc + dt * sigma0 * vWash);
+                fyBristle = Mth.clamp(fyBristle, -fc, fc);
+            } else {
+                wheel.latBristle = 0.0;
+                fyBristle = 0.0;
+            }
+            // smooth blend from rest to steady curve at speed, from Chrono's ChTMeasyTire  'Advance'
+            double frT = Mth.clamp(Math.abs(vLon) / Config.TMEASY_STANDSTILL_SPEED.getAsDouble(), 0.0, 1.0);
+            double frBlend = frT * frT * (3.0 - 2.0 * frT);
+            lateralForce = Mth.lerp(frBlend, fyBristle, lateralForce);
+
+            forwardImpulse = forwardForce * dt;
+            sideImpulse = lateralForce * dt;
+
+            if (powered) {
+                wheel.omega = TireModel.integrateSpin(wheel.omega, radius, wheelInertia, driveTorquePerWheel,
+                        brakeTorque, forwardForce, vLon, dt);
+            }
         } else {
 
-            // ------ TOGGLEABLE "ARCADE" mode for tires --------------------------------
+
+            // --------------------------------------------------------------------------------
+            // ARCADE TIRE MODEL 1
+
             double tireForce;
             if (powered) {
                 tireForce = TireModel.longitudinalForce(normalForce, effectiveMu, wheel.omega * radius, vLon, tireSpec);
@@ -819,6 +1095,8 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
             }
         }
 
+        //-----------------------------------------------------------------------
+
 
         // recording the resolved physics for csv logging
         wheel.telemLoad = normalForce;
@@ -831,6 +1109,17 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         wheel.telemWheelSpeed = wheel.omega * radius;
         wheel.telemCompression = compression;
         wheel.telemBrakeTorque = brakeTorque;
+
+        // Tire thermal update (Speed Dreams simuv4)
+        if (Config.TIRE_THERMAL_MODEL.get()) {
+            double slipVelLon = wheel.omega * radius - vLon;
+            double frictionWork = (Math.abs((forwardImpulse / dt) * slipVelLon)
+                    + Math.abs((sideImpulse / dt) * vLat)) * dt; // this would be joules this substep
+            wheel.tireTemp += frictionWork * Config.TIRE_HEATING_RATE.getAsDouble();
+            double ambient = Config.TIRE_AMBIENT_TEMP.getAsDouble();
+            wheel.tireTemp -= Config.TIRE_COOLING_RATE.getAsDouble()
+                    * (1.0 + TIRE_SPEED_COOL * Math.abs(vLon)) * (wheel.tireTemp - ambient) * dt;
+        }
 
 
         // Forward forward at the wheel center, prevents barrel rolls. Thanks again bullet
@@ -845,7 +1134,58 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         }
         forceTotal.applyImpulseAtPoint(massData, sidePoint, new Vector3d(axle).mul(sideImpulse));
 
+        recordTireSmoke(wheel, pose, contactPoint, forward, axle, vLon, vLat, radius, cast);
         return true;
+    }
+
+    // Whether to smoke tires, for the server tick. Keeping it separate from force solver
+    private void recordTireSmoke(WheelState wheel, Pose3d pose, Vector3d contactPoint, Vector3d forward,
+                                 Vector3d axle, double vLon, double vLat, double radius, TerrainCastResult cast) {
+        if (!Config.TIRE_SMOKE.get()) {
+            wheel.smokeSeverity = 0.0;
+            return;
+        }
+        double speed = Math.hypot(vLon, vLat);
+        if (speed < Config.TIRE_SMOKE_MIN_SPEED.getAsDouble()) {
+            wheel.smokeSeverity = 0.0;
+            return;
+        }
+        // taking the worse of lateral or longitudinal slip to determine if slipping
+        double slipLong = Math.abs(wheel.telemSlipRatio);
+        double slipLat = Math.abs(Math.sin(wheel.telemSlipAngleRad));
+        double slip = Math.max(slipLong, slipLat);
+        double threshold = Config.TIRE_SMOKE_SLIP_THRESHOLD.getAsDouble();
+        if (slip < threshold) {
+            wheel.smokeSeverity = 0.0;
+            return;
+        }
+        double severity = Mth.clamp((slip - threshold) / (1.0 - threshold), 0.0, 1.0);
+
+        // temperature affects smoke levels
+        double heatBoost = Config.TIRE_SMOKE_HEAT_BOOST.getAsDouble();
+        double heat = Mth.clamp((wheel.tireTemp - SMOKE_HEAT_COLD_C) / (SMOKE_HEAT_HOT_C - SMOKE_HEAT_COLD_C), 0.0, 1.0);
+        wheel.smokeSeverity = severity * ((1.0 - heatBoost) + heatBoost * heat);
+
+        Vector3d groundLocal = new Vector3d(contactPoint).sub(0.0, radius - 0.05, 0.0);
+        Vec3 world = pose.transformPosition(JOMLConversion.toMojang(groundLocal));
+        wheel.smokeX = world.x;
+        wheel.smokeY = world.y;
+        wheel.smokeZ = world.z;
+        wheel.smokeRadius = radius;
+
+        Vector3d drift = new Vector3d(forward).mul(vLon - wheel.omega * radius).add(new Vector3d(axle).mul(vLat));
+        pose.transformNormal(drift);
+        double len = drift.length();
+        if (len > 1.0e-3) {
+            drift.div(len).mul(SMOKE_DRIFT_SPEED);
+        } else {
+            drift.set(0.0, 0.0, 0.0);
+        }
+        wheel.smokeVx = drift.x;
+        wheel.smokeVy = drift.y;
+        wheel.smokeVz = drift.z;
+
+        wheel.smokeSurface = cast.hitBlock() != null ? level.getBlockState(cast.hitBlock()) : null;
     }
 
     // wheel mount gives slight friction even at 0
@@ -1032,6 +1372,23 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         return (float) Mth.lerp(partialTicks, w.lastClientSpringLength, w.clientSpringLength);
     }
 
+    public static final double RENDER_REST_RAISE = 0.8;
+
+    private double springToRaise(double springLength) {
+        double animSpring = springLength - breakawayDrop();
+        double droopSpan = MAX_DROOP_RENDER + animatedLiftHeight();
+        if (animSpring >= REST_LENGTH) {
+            double t = Mth.clamp((animSpring - REST_LENGTH) / droopSpan, 0.0, 1.0);
+            return RENDER_REST_RAISE * (1.0 - t);
+        }
+        double t = Mth.clamp((REST_LENGTH - animSpring) / MAX_TRAVEL, 0.0, 1.0);
+        return RENDER_REST_RAISE + (1.0 - RENDER_REST_RAISE) * t;
+    }
+
+    public float getLerpedRaise(WheelSide side, float partialTicks) {
+        return (float) springToRaise(getLerpedSpringLength(side, partialTicks));
+    }
+
     public float getLerpedAngle(WheelSide side, float partialTicks) {
         WheelState w = getWheel(side);
         return (float) Mth.lerp(partialTicks, w.lastAngle, w.angle);
@@ -1039,6 +1396,26 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
 
     public float getLerpedSteer(float partialTicks) {
         return (float) Mth.lerp(partialTicks, lastChasingSteer, chasingSteer);
+    }
+
+
+    // Ackermann geometry for the steering; >0 = anti-Ackermann (outer sharper), <0 = classic Ackermann (inner sharper), 0 = parallel
+    public double wheelSteerAngle(double base, WheelSide side) {
+        double k = Config.STEERING_ANTI_ACKERMANN.getAsDouble();
+        if (k == 0.0 || base == 0.0) {
+            return base;
+        }
+        boolean rightIsOuter = base > 0.0;
+        boolean isOuter = (side == WheelSide.RIGHT) == rightIsOuter;
+        boolean larger = (k > 0.0) == isOuter;
+        double half = 0.5 * Math.abs(k);
+        double t = Math.tan(Math.abs(base));
+        double denom = Math.max(0.3, larger ? 1.0 - half * t : 1.0 + half * t);
+        return Math.copySign(Math.atan(t / denom), base);
+    }
+
+    public float getLerpedSteer(WheelSide side, float partialTicks) {
+        return (float) wheelSteerAngle(getLerpedSteer(partialTicks), side);
     }
 
     // Tire placement animation
@@ -1065,6 +1442,7 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         tag.put("Controls", controlsTag);
         tag.putString("Setting", setting.name());
         tag.putBoolean("FrontAxle", frontAxle);
+        tag.putInt("LiftSteps", liftSteps);
         if (clientPacket) {
             tag.putDouble("SteerSignal", steerSignal);
             tag.putFloat("LeftOmega", (float) leftWheel.omega);
@@ -1097,6 +1475,7 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
             setting = SuspensionSetting.MEDIUM;
         }
         frontAxle = tag.getBoolean("FrontAxle");
+        liftSteps = Mth.clamp(tag.getInt("LiftSteps"), 0, MAX_LIFT_STEPS);
         if (clientPacket) {
             steerSignal = tag.getDouble("SteerSignal");
             leftWheel.omega = tag.getFloat("LeftOmega");

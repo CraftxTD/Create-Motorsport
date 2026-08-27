@@ -26,6 +26,8 @@
   "key.createmotorsport.clutch": "Clutch",
   "key.createmotorsport.shift_up": "Shift Up",
   "key.createmotorsport.shift_down": "Shift Down",
+  "key.createmotorsport.freelook": "Free Look (move camera while steering with mouse)",
+  "key.createmotorsport.exit": "Exit Vehicle / Stop Driving",
 
   "createmotorsport.configuration.title": "Create: Motorsport Configs",
   "createmotorsport.configuration.section.createmotorsport.common.toml": "Create: Motorsport Configs",

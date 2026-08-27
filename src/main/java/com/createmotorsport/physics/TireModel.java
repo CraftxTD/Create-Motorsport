@@ -6,6 +6,7 @@ import net.minecraft.util.Mth;
 // slip-based tire friction
 // based on Rapier's DynamicRayCastVehicleController (which came from Bullet's btRaycastVehicle)
 // added onto by referring to speed dreams a lot and vdrift
+// with a third model from Project Chrono
 
 public final class TireModel {
 
@@ -39,6 +40,114 @@ public final class TireModel {
     public static double longitudinalForce(double normalForce, double surfaceMu, double wheelSpeed, double groundSpeed, TireSpec spec) {
         double slipRatio = (wheelSpeed - groundSpeed) / Math.max(Math.abs(groundSpeed), 2.0);
         return normalForce * surfaceMu * spec.grip() * slipCurve(slipRatio, spec.pacejkaB(), spec.pacejkaC(), spec.pacejkaE());
+    }
+
+    /** Fiala brush tire model, ported from Project Chrono's ChFialaTire::FialaPatchForces
+     * @param kappa longitudinal slip ratio (wheelSpeed - groundSpeed) / refSpeed
+     * @param alpha slip angle (rad)
+     * @param fz    vertical load (N)
+     */
+    public static void fialaForces(double[] out, double kappa, double alpha, double fz,
+                                   double cKappa, double cAlpha, double muMax, double muMin, double frictionScale) {
+        if (fz <= 0.0 || cKappa <= 0.0 || cAlpha <= 0.0) {
+            out[0] = 0.0;
+            out[1] = 0.0;
+            return;
+        }
+        double tanA = Math.tan(alpha);
+        double ssa = Math.min(1.0, Math.sqrt(kappa * kappa + tanA * tanA));
+        double u = (muMax - (muMax - muMin) * ssa) * Math.max(0.0, frictionScale);
+        double uFz = u * fz;
+        if (uFz <= 1.0e-9) {
+            out[0] = 0.0;
+            out[1] = 0.0;
+            return;
+        }
+
+        // Longitudinal: linear below the critical slip, brush-saturation toward U*Fz above it
+        double sCritical = Math.abs(uFz / (2.0 * cKappa));
+        double fx;
+        if (Math.abs(kappa) < sCritical) {
+            fx = cKappa * kappa;
+        } else {
+            double fx2 = (uFz * uFz) / (4.0 * Math.abs(kappa) * cKappa);
+            fx = Math.signum(kappa) * (uFz - fx2);
+        }
+
+        // Lateral: brush cubic below the critical slip angle, full slide above it
+        double alphaCritical = Math.atan(3.0 * uFz / cAlpha);
+        double fy;
+        if (Math.abs(alpha) <= alphaCritical) {
+            double h = 1.0 - cAlpha * Math.abs(tanA) / (3.0 * uFz);
+            fy = -uFz * (1.0 - h * h * h) * Math.signum(alpha);
+        } else {
+            fy = -uFz * Math.signum(alpha);
+        }
+
+        out[0] = fx;
+        out[1] = fy;
+    }
+    // --------------------------------------------------
+
+    /**
+     *  This is Dr. Rill's TMeasy model ported directly from Project Chrono. Dr. Rill's textbook Vehicle Dynamics has been a great reference too
+     *  So in this model, there is one combined slip (s) mapping to a force (f) and defined very intuitively by
+     *  df0 (initial slope), fm (peak force) at sm (slip) , and fs (sliding force) reached at ss (slip)
+     *
+     *  Im also going to copy some of their notes below
+     */
+
+    // Ref: Georg Rill, "Road Vehicle Dynamics - Fundamentals and Modeling",
+    //          https://www.routledge.com/Road-Vehicle-Dynamics-Fundamentals-and-Modeling-with-MATLAB/Rill-Castro/p/book/9780367199739
+    //      Georg Rill, "An Engineer's Guess On Tyre Model Parameter Made Possible With TMeasy",
+    //          https://www.researchgate.net/publication/317036908_An_Engineer's_Guess_on_Tyre_Parameter_made_possible_with_TMeasy
+    //      Georg Rill, "Simulation von Kraftfahrzeugen",
+    //          https://www.researchgate.net/publication/317037037_Simulation_von_Kraftfahrzeugen
+    //
+    // Known differences to the commercial version:
+    //  - No parking slip calculations
+    //  - No dynamic parking torque
+    //  - No dynamic tire inflation pressure
+    //  - No belt dynamics
+    //  - Simplified stand still handling
+
+    public static void tmeasyCombined(double[] out, double s, double df0, double sm, double fm,
+                                      double ss, double fs) {
+        double df0loc = sm > 0.0 ? Math.max(2.0 * fm / sm, df0) : 0.0;
+        if (s <= 0.0 || df0loc <= 0.0 || fm <= 0.0) {
+            out[0] = 0.0;
+            out[1] = 0.0;
+            return;
+        }
+        double f;
+        double fos;
+        if (s > ss) {                             // full sliding
+            f = fs;
+            fos = f / s;
+        } else if (s < sm) {                      // adhesion
+            double p = df0loc * sm / fm - 2.0;
+            double sn = s / sm;
+            double dn = 1.0 + (sn + p) * sn;
+            f = df0loc * sm * sn / dn;
+            fos = df0loc / dn;
+        } else {                            // transition from peak toward sliding
+            double a = (fm / sm) * (fm / sm) / (df0loc * sm);   // from 2nd deriv of f at s = sm
+            double sstar = sm + (fm - fs) / (a * (ss - sm));    // where the two parabolas would join
+            if (sstar <= ss) {
+                if (s <= sstar) {
+                    f = fm - a * (s - sm) * (s - sm);            // 1st parabola
+                } else {
+                    double b = a * (sstar - sm) / (ss - sstar);
+                    f = fs + b * (ss - s) * (ss - s);            // 2nd parabola
+                }
+            } else {
+                double sn = (s - sm) / (ss - sm);
+                f = fm - (fm - fs) * sn * sn * (3.0 - 2.0 * sn); // cubic fallback (smoothstep)
+            }
+            fos = f / s;
+        }
+        out[0] = f;
+        out[1] = fos;
     }
 
     // stop moving when still, based on how offroad seems to do it
@@ -109,11 +218,10 @@ public final class TireModel {
             newOmega = 0.0;
         }
 
-        // If slip changed sign this step, converge to pure rolling instead of oscillating
         double rollingOmega = groundSpeed / radius;
         double slipBefore = omega - rollingOmega;
         double slipAfter = newOmega - rollingOmega;
-        if (slipBefore * slipAfter < 0.0 && Math.abs(driveTorque) < 1.0e-3 && brakeTorque < 1.0e-3) {
+        if (slipBefore * slipAfter < 0.0 && brakeTorque < 1.0e-3) {
             newOmega = rollingOmega;
         }
         return Mth.clamp(newOmega, -400.0, 400.0);

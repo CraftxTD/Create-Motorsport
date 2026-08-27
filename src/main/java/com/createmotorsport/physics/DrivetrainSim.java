@@ -4,6 +4,10 @@ import com.createmotorsport.Config;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.util.Mth;
 
+// Updated torque and clutch math ported from Vdrift mostly (it was Speed Dreams based before)
+// The original work was mostly a placeholder, this is much better as this now
+// simulates the engines flywheel and has proper clutch grab behavior
+
 public final class DrivetrainSim {
     private static final double RAD_TO_RPM = 60.0 / (2.0 * Math.PI);
 
@@ -11,20 +15,22 @@ public final class DrivetrainSim {
     public static final int GEAR_NEUTRAL = 1;
     public static final int GEAR_FIRST = 2;
 
-    // from speed dreams, how quickly clutch re-engages after being disengaged, in seconds
     private static final double CLUTCH_ENGAGE_TIME = 0.4;
-
-    // for semi-auto shifting, how long gearbox holds clutch open and cuts throttle
     private static final double SHIFT_RELEASE_TIME = 0.2;
 
-    // trying to get clutch launch behavior better
-    private static final double LAUNCH_FLARE_FRAC = 0.42;
+    private static final double IDLE_GAIN = 1.5;
+
+    private static final double CLUTCH_LAUNCH_GRAB = 0.75;
+    private static final double CLUTCH_HOLD_GRAB = 1.30;
+    private static final double CLUTCH_FLARE_BAND = 2500.0;
+    private static final double CLUTCH_IDLE_CREEP = 0.10;
+    private static final double CLUTCH_DUMP_BAND = 4000.0;
 
     private final EngineSpec spec;
 
     private double rpm;
     private int gear = GEAR_NEUTRAL;
-    private double clutchEngage = 1.0; // 0 = disengaged, 1 = fully engaged (Speed dreams' transferValue)
+    private double clutchEngage = 0.0; // 0 = disengaged
     private double shiftReleaseTimer = 0.0; // seconds left in the semi-auto clutch dip during a shift
 
     // last-computed values, for csv logging
@@ -42,7 +48,6 @@ public final class DrivetrainSim {
         return GEAR_FIRST + Config.gearRatios().length - 1;
     }
 
-
     /**
      * Advances the drivetrain by 1 tick
      * @param running       engine has fuel and is on
@@ -57,13 +62,16 @@ public final class DrivetrainSim {
      */
     public double update(boolean running, double throttle, boolean clutchHeld, boolean semiAuto,
                          boolean shiftUpEdge, boolean shiftDownEdge, double wheelOmega, double dt) {
+        double inertia = Config.ENGINE_INERTIA.getAsDouble();
+        double omega = this.rpm / RAD_TO_RPM;
+        double maxOmega = this.spec.redlineRpm() * 1.05 / RAD_TO_RPM;
+
         if (!running) {
             this.rpm = Math.max(0.0, this.rpm - this.spec.redlineRpm() * 2.0 * dt);
+            this.clutchEngage = 0.0;
             return record(0.0, 0.0, 0.0, false);
         }
 
-
-        // manual and semi-auto modes now
         boolean canShift = semiAuto || clutchHeld;
         if (canShift) {
             if (shiftUpEdge) {
@@ -82,54 +90,107 @@ public final class DrivetrainSim {
         double ratio = overallRatio(this.gear);
         boolean disengaged = clutchHeld || shiftDip || this.gear == GEAR_NEUTRAL;
 
-        if (disengaged) {
-            // cuts throttle during paddle-shifting, inspired by speed dreams
-            this.clutchEngage = 0.0;
-            double revThrottle = shiftDip ? 0.0 : throttle;
-            double targetRpm = this.spec.idleRpm() + revThrottle * (this.spec.redlineRpm() - this.spec.idleRpm());
-            this.rpm = Mth.lerp(1.0 - Math.exp(-5.0 * dt), this.rpm, Math.max(this.spec.idleRpm(), targetRpm));
-            if (revThrottle < 0.02) {
-                this.rpm = Mth.lerp(1.0 - Math.exp(-3.0 * dt), this.rpm, this.spec.idleRpm());
-            }
-            return record(0.0, ratio, 0.0, false);
-        }
+        double idleErr = (this.spec.idleRpm() - this.rpm) / this.spec.idleRpm();
+        double idleThrottle = Mth.clamp(idleHoldThrottle() + idleErr * IDLE_GAIN, 0.0, 0.6);
+        double driverThrottle = shiftDip ? 0.0 : throttle;
+        double effThrottle = Math.max(driverThrottle, idleThrottle);
+
+        double tEng = netEngineTorque(effThrottle, omega);
 
         double absRatio = Math.abs(ratio);
+        double omegaGb = wheelOmega * ratio;
         double rpmFromWheels = Math.abs(wheelOmega) * absRatio * RAD_TO_RPM;
 
-        // speed dreams' transferValue ramps back up over short time instead of snapping locked, with transmitted
-        // torque reaching full at 1/3 engaged
-        this.clutchEngage = Math.min(1.0, this.clutchEngage + dt / CLUTCH_ENGAGE_TIME);
-        double transfer = Math.min(1.0, this.clutchEngage * 3.0);
+        double idleRpm = this.spec.idleRpm();
+        double moving = Mth.clamp((rpmFromWheels - idleRpm) / (idleRpm * 0.25), 0.0, 1.0);
+        double aboveIdle = Mth.clamp((this.rpm - idleRpm) / (idleRpm * 0.2), 0.0, 1.0);
+        double launchRpm = Math.max(idleRpm, Config.LAUNCH_RPM.getAsDouble());
+        double lockPoint = idleRpm * 1.25;
+        double launchBlend = Mth.clamp(rpmFromWheels / lockPoint, 0.0, 1.0);
+        double launchFloor = Mth.lerp(launchBlend, launchRpm, rpmFromWheels);
+        double launchTarget = Math.max(rpmFromWheels, launchFloor);
+        double over = Mth.clamp((this.rpm - launchTarget) / CLUTCH_FLARE_BAND, 0.0, 1.0);
+        double grabFrac = CLUTCH_LAUNCH_GRAB + (CLUTCH_HOLD_GRAB - CLUTCH_LAUNCH_GRAB) * over;
 
-        // where the free revving engine wants to sit for the throttle
-        double idle = this.spec.idleRpm();
-        double flareRange = LAUNCH_FLARE_FRAC * (this.spec.redlineRpm() - idle);
-        double flareTarget = idle + throttle * flareRange;
-        double launchRpm = idle + flareRange; // full-throttle flare, top of the blend window
+        double launchGrab = disengaged ? 0.0
+                : Mth.clamp(grabFrac * tEng / Config.CLUTCH_MAX_TORQUE.getAsDouble(), 0.0, 1.0) * aboveIdle;
 
-        // clutch slipping behavior from speed dreams
-        double lock = Mth.clamp((rpmFromWheels - idle) / (launchRpm - idle), 0.0, 1.0);
-        double targetRpm = Mth.lerp(lock, flareTarget, rpmFromWheels);
-        targetRpm = Math.min(Math.max(idle, targetRpm), this.spec.redlineRpm() * 1.02);
-        this.rpm = Mth.lerp(1.0 - Math.exp(-8.0 * dt), this.rpm, targetRpm);
+        double overspeed = disengaged ? 0.0
+                : Mth.clamp((this.rpm - launchTarget - CLUTCH_FLARE_BAND) / CLUTCH_DUMP_BAND, 0.0, 1.0);
 
-        boolean slipping = lock < 1.0 || transfer < 1.0;
+        double creep = disengaged ? 0.0
+                : CLUTCH_IDLE_CREEP * Mth.clamp((this.rpm - idleRpm * 0.9) / (idleRpm * 0.1), 0.0, 1.0);
 
-        // help stand-still drifting by making engine braking only work when wheels are turning near the idle-in-gear speed
-        double engineTorque;
-        if (throttle < 0.02) {
-            double brakeEngage = Mth.clamp(rpmFromWheels / idle, 0.0, 1.0);
-            engineTorque = -this.spec.engineBrakeTorque(this.rpm) * brakeEngage;
+        double engageDemand = disengaged ? 0.0
+                : Math.max(Math.max(moving, launchGrab), Math.max(overspeed, creep));
+
+        double engageUp = dt / CLUTCH_ENGAGE_TIME;
+        double engageDown = engageUp * 3.0;
+        if (engageDemand > this.clutchEngage) {
+            this.clutchEngage = Math.min(engageDemand, this.clutchEngage + engageUp);
         } else {
-            engineTorque = throttle * this.spec.torqueAt(this.rpm);
+            this.clutchEngage = Math.max(engageDemand, this.clutchEngage - engageDown);
         }
-        // Scale the whole curve so its peak equals the configured crank torque (Nm), with curve shape unchanged
-        engineTorque *= Config.ENGINE_PEAK_TORQUE.getAsDouble() / this.spec.peakTorque();
 
-        // Transmitted torque scales with engagement
-        double wheelTorque = engineTorque * transfer * ratio * this.spec.drivelineEfficiency();
-        return record(engineTorque, ratio, wheelTorque, !slipping);
+        if (disengaged) {
+            omega = clampOmega(omega + dt / inertia * tEng, maxOmega);
+            this.rpm = omega * RAD_TO_RPM;
+            return record(tEng, ratio, 0.0, false);
+        }
+
+        double tCap = Config.CLUTCH_MAX_TORQUE.getAsDouble() * this.clutchEngage;
+        double kc = Config.CLUTCH_LOCK_STIFFNESS.getAsDouble();
+
+        double omegaStick = (omega + dt / inertia * (tEng + kc * omegaGb)) / (1.0 + dt * kc / inertia);
+        double tClutch = kc * (omegaStick - omegaGb);
+        boolean locked;
+        double omegaNew;
+        if (Math.abs(tClutch) <= tCap) {
+            locked = true;
+            omegaNew = omegaStick;
+        } else {
+            locked = false;
+            tClutch = Math.copySign(tCap, tClutch);
+            omegaNew = omega + dt / inertia * (tEng - tClutch);
+        }
+
+        this.rpm = clampOmega(omegaNew, maxOmega) * RAD_TO_RPM;
+
+        double wheelTorque = tClutch * ratio * Config.DRIVELINE_EFFICIENCY.getAsDouble();
+        return record(tEng, ratio, wheelTorque, locked);
+    }
+
+    private static double clampOmega(double omega, double maxOmega) {
+        return Math.min(Math.max(0.0, omega), maxOmega);
+    }
+
+
+    private double idleHoldThrottle() {
+        double scale = Config.ENGINE_PEAK_TORQUE.getAsDouble() / this.spec.peakTorque();
+        double idleTorque = this.spec.torqueAt(this.spec.idleRpm()) * scale;
+        if (idleTorque <= 1.0e-6) {
+            return 0.1;
+        }
+        double idleFriction = frictionTorque(this.spec.idleRpm(), 0.0);
+        return Mth.clamp(idleFriction / idleTorque, 0.0, 0.6);
+    }
+
+    private double netEngineTorque(double effThrottle, double omega) {
+        double rpmNow = Math.abs(omega) * RAD_TO_RPM;
+        double scale = Config.ENGINE_PEAK_TORQUE.getAsDouble() / this.spec.peakTorque();
+        double combustion = rpmNow >= this.spec.redlineRpm()
+                ? 0.0
+                : effThrottle * this.spec.torqueAt(rpmNow) * scale;
+        double sign = omega >= 0.0 ? 1.0 : -1.0;
+        return combustion - sign * frictionTorque(rpmNow, effThrottle);
+    }
+
+    private double frictionTorque(double rpm, double effThrottle) {
+        double base = Config.ENGINE_BRAKE_FRACTION.getAsDouble() * Config.ENGINE_PEAK_TORQUE.getAsDouble();
+        double n = Mth.clamp(Math.abs(rpm) / this.spec.redlineRpm(), 0.0, 1.2);
+        double mechanical = base * (0.25 + 0.45 * n);
+        double pumping = base * (0.35 + 1.40 * n * n) * (1.0 - Mth.clamp(effThrottle, 0.0, 1.0));
+        return mechanical + pumping;
     }
 
     private double record(double engineTorque, double ratio, double wheelTorque, boolean clutchLocked) {

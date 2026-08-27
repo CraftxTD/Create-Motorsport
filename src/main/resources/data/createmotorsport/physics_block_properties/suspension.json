@@ -2,6 +2,6 @@
   "selector": "createmotorsport:suspension",
 
   "properties": {
-    "sable:mass": 6.0
+    "sable:mass": 8.0
   }
 }

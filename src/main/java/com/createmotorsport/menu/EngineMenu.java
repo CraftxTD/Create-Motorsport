@@ -3,6 +3,7 @@ package com.createmotorsport.menu;
 import com.createmotorsport.CreateMotorsport;
 import com.createmotorsport.block.entity.EngineBlockEntity;
 import com.createmotorsport.block.entity.EngineBlockEntity.ControlChannel;
+import net.minecraft.core.BlockPos;
 import net.minecraft.world.Container;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.entity.player.Inventory;
@@ -40,17 +41,20 @@ public class EngineMenu extends AbstractContainerMenu {
 
     private final Container engineInventory;
     private final ContainerData data;
+    private final BlockPos enginePos;
 
-    public EngineMenu(int containerId, Inventory playerInventory) {
-        this(containerId, playerInventory, new SimpleContainer(ENGINE_SLOT_COUNT), null);
+    public EngineMenu(int containerId, Inventory playerInventory, BlockPos pos) {
+        this(containerId, playerInventory, new SimpleContainer(ENGINE_SLOT_COUNT), null, pos);
     }
 
     public EngineMenu(int containerId, Inventory playerInventory, EngineBlockEntity engine) {
-        this(containerId, playerInventory, engine.getInventory(), engine);
+        this(containerId, playerInventory, engine.getInventory(), engine, engine.getBlockPos());
     }
 
-    private EngineMenu(int containerId, Inventory playerInventory, Container engineInventory, EngineBlockEntity engine) {
+    private EngineMenu(int containerId, Inventory playerInventory, Container engineInventory, EngineBlockEntity engine,
+                       BlockPos pos) {
         super(CreateMotorsport.ENGINE_MENU.get(), containerId);
+        this.enginePos = pos;
         checkContainerSize(engineInventory, ENGINE_SLOT_COUNT);
         this.engineInventory = engineInventory;
         this.data = engine != null ? new ContainerData() {
@@ -99,6 +103,10 @@ public class EngineMenu extends AbstractContainerMenu {
         }
 
         addDataSlots(data);
+    }
+
+    public BlockPos getEnginePos() {
+        return enginePos;
     }
 
     public int getRpm() {

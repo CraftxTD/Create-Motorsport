@@ -31,9 +31,13 @@ public final class SteeringInputHandler {
     private static int lastBrake = -1;
     private static int lastSteer = -999;
 
+    private static boolean hudTogglePrev;
+
     // Fake steering input for keypresses to apply a gamma too, so they can have an assist too
     private static float keySteer = 0.0f;
-    private static final float STEER_KEY_RAMP = 0.2f;
+    // Fake pedal input also
+    private static float keyThrottle = 0.0f;
+    private static float keyBrake = 0.0f;
 
     private SteeringInputHandler() {
     }
@@ -56,6 +60,8 @@ public final class SteeringInputHandler {
         lastBrake = -1;
         lastSteer = -999;
         keySteer = 0.0f;
+        keyThrottle = 0.0f;
+        keyBrake = 0.0f;
         PacketDistributor.sendToServer(new SetDrivingPacket(activePos, true));
     }
 
@@ -70,8 +76,14 @@ public final class SteeringInputHandler {
         int key = event.getKey();
         int action = event.getAction();
 
-        // esc to quit
         if (key == GLFW.GLFW_KEY_ESCAPE) {
+            return;
+        }
+        if (action == GLFW.GLFW_PRESS && MotorsportKeybinds.isExit(key, event.getScanCode())) {
+            stop();
+            return;
+        }
+        if (MotorsportKeybinds.isFreeLook(key, event.getScanCode())) {
             return;
         }
         // F1-F12 and slash key passthrough for POV, chat, and other keybinds
@@ -114,6 +126,11 @@ public final class SteeringInputHandler {
         }
 
         GamepadInput.poll();
+        MouseInput.poll();
+
+        // Lock the camera while driving with the mouse
+        boolean mouseLock = MouseInput.enabled() && hasMouseControl() && !MotorsportKeybinds.freeLookHeld();
+        MouseSteerCamera.update(mouseLock);
 
         int mask = 0;
         for (int i = 0; i < activeKeyCodes.length; i++) {
@@ -122,13 +139,22 @@ public final class SteeringInputHandler {
             }
         }
 
+        // client only HUD toggle
+        boolean hudDown = (mask & (1 << SteeringControl.HUD_TOGGLE.ordinal())) != 0;
+        if (hudDown && !hudTogglePrev) {
+            MotorsportHud.toggle();
+        }
+        hudTogglePrev = hudDown;
 
-        // I tried to do a fake steering input for key presses, so that there is something for a gamma to apply to
-        // so far it seems like its working well enough
+
+        // Keypress assists create fake inputs so the input isnt instantaneous and its something for the Gamma to work on
         float pedalGamma = (float) Config.PEDAL_INPUT_GAMMA.getAsDouble();
         float steerGamma = (float) Config.STEER_INPUT_GAMMA.getAsDouble();
-        float throttle = (float) Math.pow(strength(SteeringControl.THROTTLE), pedalGamma);
-        float brake = (float) Math.pow(strength(SteeringControl.BRAKE), pedalGamma);
+        float pedalRamp = (float) Config.PEDAL_KEY_RAMP.getAsDouble();
+        float throttleInput = pedalInput(SteeringControl.THROTTLE, pedalRamp, true);
+        float brakeInput = pedalInput(SteeringControl.BRAKE, pedalRamp, false);
+        float throttle = (float) Math.pow(throttleInput, pedalGamma);
+        float brake = (float) Math.pow(brakeInput, pedalGamma);
 
         float steerTarget = strength(SteeringControl.STEER_LEFT) - strength(SteeringControl.STEER_RIGHT);
         float steerInput;
@@ -136,10 +162,11 @@ public final class SteeringInputHandler {
             steerInput = steerTarget;
             keySteer = steerTarget;
         } else {
+            float ramp = (float) Config.KEYPRESS_STEERING_RAMP.getAsDouble();
             if (steerTarget > keySteer) {
-                keySteer = Math.min(steerTarget, keySteer + STEER_KEY_RAMP);
+                keySteer = Math.min(steerTarget, keySteer + ramp);
             } else if (steerTarget < keySteer) {
-                keySteer = Math.max(steerTarget, keySteer - STEER_KEY_RAMP);
+                keySteer = Math.max(steerTarget, keySteer - ramp);
             }
             steerInput = keySteer;
         }
@@ -165,7 +192,22 @@ public final class SteeringInputHandler {
         if (code < 0) {
             return false;
         }
-        return GamepadCodes.isGamepadCode(code) ? GamepadInput.isDown(code) : HELD_KEYS.contains(code);
+        if (GamepadCodes.isGamepadCode(code)) {
+            return GamepadInput.isDown(code);
+        }
+        if (MouseCodes.isMouseCode(code)) {
+            return MouseInput.isDown(code);
+        }
+        return HELD_KEYS.contains(code);
+    }
+
+    private static boolean hasMouseControl() {
+        for (int code : activeKeyCodes) {
+            if (MouseCodes.isMouseCode(code)) {
+                return true;
+            }
+        }
+        return false;
     }
 
 
@@ -180,7 +222,23 @@ public final class SteeringInputHandler {
             return false;
         }
         int code = activeKeyCodes[idx];
-        return code >= 0 && GamepadCodes.isAnalogCode(code);
+        return code >= 0 && (GamepadCodes.isAnalogCode(code) || MouseCodes.isAnalog(code));
+    }
+
+    private static float pedalInput(SteeringControl control, float ramp, boolean throttle) {
+        float target = strength(control);
+        if (isAnalogControl(control)) {
+            if (throttle) keyThrottle = target; else keyBrake = target;
+            return target;
+        }
+        float current = throttle ? keyThrottle : keyBrake;
+        if (target > current) {
+            current = Math.min(target, current + ramp);
+        } else if (target < current) {
+            current = Math.max(target, current - ramp);
+        }
+        if (throttle) keyThrottle = current; else keyBrake = current;
+        return current;
     }
 
     // analog strength, keypress or button is just 1
@@ -196,6 +254,9 @@ public final class SteeringInputHandler {
         if (GamepadCodes.isGamepadCode(code)) {
             return GamepadInput.analogMagnitude(code);
         }
+        if (MouseCodes.isMouseCode(code)) {
+            return MouseInput.analogMagnitude(code);
+        }
         return HELD_KEYS.contains(code) ? 1.0F : 0.0F;
     }
 
@@ -207,7 +268,7 @@ public final class SteeringInputHandler {
     }
 
     private static void showActionBar(LocalPlayer player, int mask) {
-        StringBuilder sb = new StringBuilder("Driving, [esc] to quit");
+        StringBuilder sb = new StringBuilder("Driving, [" + MotorsportKeybinds.exitKeyName().getString() + "] to quit");
         boolean first = true;
         for (SteeringControl control : SteeringWheelBlockEntity.CONTROLS) {
             if ((mask & (1 << control.ordinal())) != 0) {
@@ -247,12 +308,15 @@ public final class SteeringInputHandler {
         BlockPos pos = activePos;
         activePos = null;
         activeKeyCodes = new int[0];
+        MouseSteerCamera.reset();
         HELD_KEYS.clear();
         lastSentMask = -1;
         lastThrottle = -1;
         lastBrake = -1;
         lastSteer = -999;
         keySteer = 0.0f;
+        keyThrottle = 0.0f;
+        keyBrake = 0.0f;
         if (pos != null && Minecraft.getInstance().player != null) {
             PacketDistributor.sendToServer(new SteeringInputPacket(pos, 0, 0, 0, 0));
             PacketDistributor.sendToServer(new SetDrivingPacket(pos, false));

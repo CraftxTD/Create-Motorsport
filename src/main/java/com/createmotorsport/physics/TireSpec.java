@@ -1,5 +1,6 @@
 package com.createmotorsport.physics;
 
+import com.createmotorsport.Config;
 import net.minecraft.util.Mth;
 
 /**
@@ -35,15 +36,16 @@ public record TireSpec(
         return Math.min(1.0, eFactor);
     }
 
+    private static final double SLICK_LOAD_FACTOR_LIGHT = 1.15;
+    private static final double SLICK_LOAD_FACTOR_HEAVY = 0.80;
+    private static final double SLICK_LOAD_FALLOFF = -0.6;
 
-    // Default tier with numbers that would calculate to the old ones (B=10, C=1.9, E=0.85). So, replace them with
-    //(Ca 30, rFactor 0.8, eFactor 0.7) to be closer to speed dreams
-    public static final TireSpec RACING_SLICK = new TireSpec(
-            19.0, 0.156434, 0.85, 1.5, 1.15, 0.80, -0.6);
-
-    // per axle tier for proper oversteering balance. Make front grippier compared to rear like I did here
-    public static final TireSpec RACING_SLICK_FRONT = new TireSpec(
-            19.0, 0.156434, 0.85, 1.5, 1.15, 0.80, -0.6);
-    public static final TireSpec RACING_SLICK_REAR = new TireSpec(
-            19.0, 0.156434, 0.85, 1.28, 1.15, 0.80, -0.6);
+    public static TireSpec fromConfig(boolean front) {
+        return new TireSpec(
+                Config.PACEJKA_CORNERING_STIFFNESS.getAsDouble(),
+                Config.PACEJKA_RFACTOR.getAsDouble(),
+                Config.PACEJKA_EFACTOR.getAsDouble(),
+                (front ? Config.TIRE_GRIP_FRONT : Config.TIRE_GRIP_REAR).getAsDouble(),
+                SLICK_LOAD_FACTOR_LIGHT, SLICK_LOAD_FACTOR_HEAVY, SLICK_LOAD_FALLOFF);
+    }
 }

@@ -8,9 +8,11 @@ import java.util.Set;
 
 public final class GamepadInput {
 
-    private static final float STICK_THRESHOLD = 0.35F;
-    private static final float TRIGGER_THRESHOLD = 0.15F;
-    private static final float RAW_AXIS_THRESHOLD = 0.20F;
+
+
+    private static float stickDeadzone() {return (float) Config.STICK_DEADZONE.getAsDouble(); }
+    private static float triggerDeadzone() {return (float) Config.TRIGGER_DEADZONE.getAsDouble(); }
+    private static float rawDeadzone() {return (float) Config.ADVANCED_INPUT_DEADZONE.getAsDouble(); }
 
     private static final JoystickPoller POLLER = new JoystickPoller();
     private static final Set<Integer> captureLast = new HashSet<>();
@@ -43,23 +45,25 @@ public final class GamepadInput {
         }
         if (GamepadCodes.isBasicTrigger(code)) {
             float raw = (POLLER.axis(d, GamepadCodes.triggerAxis(code)) + 1.0F) * 0.5F; // -1 rest to +1 pulled
-            return raw <= TRIGGER_THRESHOLD ? 0.0F : ramp(raw, TRIGGER_THRESHOLD);
+            return raw <= triggerDeadzone() ? 0.0F : ramp(raw, triggerDeadzone());
         }
         if (GamepadCodes.isBasicStick(code)) {
             float v = POLLER.axis(d, GamepadCodes.stickAxis(code));
             float dir = GamepadCodes.stickPositive(code) ? v : -v;
-            return dir <= STICK_THRESHOLD ? 0.0F : ramp(dir, STICK_THRESHOLD);
+            return dir <= stickDeadzone() ? 0.0F : ramp(dir, stickDeadzone());
         }
         if (GamepadCodes.isRawButton(code)) {
             return POLLER.button(d, GamepadCodes.rawButtonIndex(code)) ? 1.0F : 0.0F;
         }
         if (GamepadCodes.isRawAxisPos(code)) {
+            float dz = rawDeadzone();
             float v = POLLER.axis(d, GamepadCodes.rawAxisIndex(code));
-            return v <= RAW_AXIS_THRESHOLD ? 0.0F : ramp(v, RAW_AXIS_THRESHOLD);
+            return v <= dz ? 0.0F : ramp(v, dz);
         }
         if (GamepadCodes.isRawAxisNeg(code)) {
+            float dz = rawDeadzone();
             float v = -POLLER.axis(d, GamepadCodes.rawAxisIndex(code));
-            return v <= RAW_AXIS_THRESHOLD ? 0.0F : ramp(v, RAW_AXIS_THRESHOLD);
+            return v <= dz ? 0.0F : ramp(v, dz);
         }
         if (GamepadCodes.isRawHat(code)) {
             int bits = POLLER.hat(d, GamepadCodes.rawHatIndex(code)) & 0xFF;
@@ -106,10 +110,10 @@ public final class GamepadInput {
                         set.add(GamepadCodes.basicButton(d, i));
                     }
                 }
-                if ((POLLER.axis(d, GamepadCodes.AXIS_LT) + 1.0F) * 0.5F >= TRIGGER_THRESHOLD) {
+                if ((POLLER.axis(d, GamepadCodes.AXIS_LT) + 1.0F) * 0.5F >= triggerDeadzone()) {
                     set.add(GamepadCodes.triggerLT(d));
                 }
-                if ((POLLER.axis(d, GamepadCodes.AXIS_RT) + 1.0F) * 0.5F >= TRIGGER_THRESHOLD) {
+                if ((POLLER.axis(d, GamepadCodes.AXIS_RT) + 1.0F) * 0.5F >= triggerDeadzone()) {
                     set.add(GamepadCodes.triggerRT(d));
                 }
                 addBasicStick(set, d, POLLER.axis(d, GamepadCodes.AXIS_LEFT_X), POLLER.axis(d, GamepadCodes.AXIS_LEFT_Y), 0);
@@ -122,9 +126,9 @@ public final class GamepadInput {
                 }
                 for (int a = 0; a < POLLER.axisCount(d); a++) {
                     float v = POLLER.axis(d, a);
-                    if (v >= RAW_AXIS_THRESHOLD) {
+                    if (v >= rawDeadzone()) {
                         set.add(GamepadCodes.rawAxisPos(d, a));
-                    } else if (v <= -RAW_AXIS_THRESHOLD) {
+                    } else if (v <= -rawDeadzone()) {
                         set.add(GamepadCodes.rawAxisNeg(d, a));
                     }
                 }
@@ -142,10 +146,10 @@ public final class GamepadInput {
     }
 
     private static void addBasicStick(Set<Integer> set, int d, float x, float y, int kBase) {
-        if (x >= STICK_THRESHOLD)  set.add(GamepadCodes.stickCode(d, kBase));       // right (+x)
-        if (x <= -STICK_THRESHOLD) set.add(GamepadCodes.stickCode(d, kBase + 1));   // left  (-x)
-        if (y >= STICK_THRESHOLD)  set.add(GamepadCodes.stickCode(d, kBase + 2));   // down  (+y)
-        if (y <= -STICK_THRESHOLD) set.add(GamepadCodes.stickCode(d, kBase + 3));   // up    (-y)
+        if (x >= stickDeadzone())  set.add(GamepadCodes.stickCode(d, kBase));       // right (+x)
+        if (x <= -stickDeadzone()) set.add(GamepadCodes.stickCode(d, kBase + 1));   // left  (-x)
+        if (y >= stickDeadzone())  set.add(GamepadCodes.stickCode(d, kBase + 2));   // down  (+y)
+        if (y <= -stickDeadzone()) set.add(GamepadCodes.stickCode(d, kBase + 3));   // up    (-y)
     }
 
     // GamepadCodes hat direction

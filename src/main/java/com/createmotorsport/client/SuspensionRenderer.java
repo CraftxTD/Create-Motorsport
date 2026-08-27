@@ -22,10 +22,13 @@ import org.joml.Vector3f;
 import software.bernie.geckolib.renderer.GeoBlockRenderer;
 
 public class SuspensionRenderer extends GeoBlockRenderer<SuspensionBlockEntity> {
-    private static final float SPIN_SIGN = -1.0F;
+    private static final float SPIN_SIGN = 1.0F;
     private static final float STEER_SIGN = 1.0F;
 
     private static final float DROP_HEIGHT = 0.5F;
+
+    private static final float WHEEL_LIFT = 7.0F / 16.0F;
+
 
     private static final Vector3f LEFT_HUB = new Vector3f(8.0F / 16F, 1.0F / 16F, (8.0F + 25.0F) / 16F);
     private static final Vector3f RIGHT_HUB = new Vector3f(8.0F / 16F, 1.0F / 16F, (8.0F - 25.0F) / 16F);
@@ -37,8 +40,10 @@ public class SuspensionRenderer extends GeoBlockRenderer<SuspensionBlockEntity> 
     @Override
     public void render(SuspensionBlockEntity be, float partialTicks, PoseStack ms, MultiBufferSource buffer,
                        int light, int overlay) {
+        ms.pushPose();
         super.render(be, partialTicks, ms, buffer, light, overlay);
         renderTires(be, partialTicks, ms, buffer, light, overlay);
+        ms.popPose();
     }
 
     @Override
@@ -68,17 +73,23 @@ public class SuspensionRenderer extends GeoBlockRenderer<SuspensionBlockEntity> 
             return;
         }
 
-        float springLength = be.getLerpedSpringLength(side, partialTicks);
-        float travel = (float) (SuspensionBlockEntity.REST_LENGTH - springLength); // + when compressed (wheel up)
+        float raiseOffset = be.getLerpedRaise(side, partialTicks) * WHEEL_LIFT; // + as the suspension compresses
         float deploy = be.getLerpedDeploy(side, partialTicks);
         float dropOffset = (1.0F - deploy) * DROP_HEIGHT; // starts high, eases to 0
         float spin = be.getLerpedAngle(side, partialTicks);
-        float steer = be.getLerpedSteer(partialTicks);
+        float steer = be.getLerpedSteer(side, partialTicks);
+        float breakaway = (float) be.breakawayDrop(); // for tire breakaway from suspension with the lift heigh
+
+        // flip one tire so its not inside out
+        boolean flip = side == WheelSide.LEFT;
 
         ms.pushPose();
-        ms.translate(hub.x, hub.y + travel + dropOffset, hub.z);
+        ms.translate(hub.x, hub.y + raiseOffset + dropOffset - breakaway, hub.z);
         ms.mulPose(Axis.YP.rotation(steer * STEER_SIGN)); // steering yaw
-        ms.mulPose(Axis.ZP.rotation(spin * SPIN_SIGN));   // roll about the axle (Z in authored space)
+        if (flip) {
+            ms.mulPose(Axis.YP.rotation((float) Math.PI));
+        }
+        ms.mulPose(Axis.ZP.rotation(spin * SPIN_SIGN * (flip ? -1.0F : 1.0F)));
 
         // Tire's own orientation offset (aero tires default to a 90-deg X rotation)
         Vec3 rot = tire.rotation();
@@ -101,9 +112,9 @@ public class SuspensionRenderer extends GeoBlockRenderer<SuspensionBlockEntity> 
     private static float blockstateYaw(Direction facing) {
         return switch (facing) {
             case SOUTH -> 90.0F;
-            case WEST -> 180.0F;
+            case WEST -> 0.0F;
             case NORTH -> 270.0F;
-            default -> 0.0F;
+            default -> 180.0F; // EAST
         };
     }
 

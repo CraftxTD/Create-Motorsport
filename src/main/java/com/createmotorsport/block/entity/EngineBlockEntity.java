@@ -99,6 +99,13 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
     private double telemWheelTorqueTotal;
     private int telemDrivenWheels;
 
+    // User selected engine crank rotation direction (+1 or -1)
+    private int rotationDirection = 1;
+
+    // Center-differential coupling gain
+    // Nm of torque transfer per rad/s of front vs rear speed difference
+    private static final double CENTER_DIFF_COUPLING = 50.0;
+
     // Driver controlled settings: engine mode, overtake and traction control affecting torque
     public static final int MAX_POWER_MODE = 8;
     private static final double BOOST_FACTOR = 1.25;   // overtake torque multiplier
@@ -203,13 +210,13 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
                     continue;
                 }
                 if (!isDrivenAxle(suspension)) {
-                    continue; // for AWD/RWD/FWD differences, drives freely without affecting RPM
+                    continue;
                 }
                 axles.add(suspension);
                 if (repRadius <= 0.0) {
                     repRadius = suspension.getTireRadius();
                 }
-                int sign = facingSign(engineFacing, suspension.getFacing());
+                int sign = rotationDirection * facingSign(engineFacing, suspension.getFacing());
                 int tireCount = (suspension.hasTire(SuspensionBlockEntity.WheelSide.LEFT) ? 1 : 0)
                         + (suspension.hasTire(SuspensionBlockEntity.WheelSide.RIGHT) ? 1 : 0);
                 omegaSum += suspension.averageDrivenOmega(sign) * tireCount;
@@ -229,10 +236,46 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
         this.telemDrivenWheels = wheelCount;
 
         if (wheelCount > 0) {
-            double perWheel = totalTorque / wheelCount;
             long gameTime = level.getGameTime();
+
+            double frontOmegaSum = 0.0;
+            double rearOmegaSum = 0.0;
+            int frontWheels = 0;
+            int rearWheels = 0;
             for (SuspensionBlockEntity suspension : axles) {
-                int sign = facingSign(engineFacing, suspension.getFacing());
+                int sign = rotationDirection * facingSign(engineFacing, suspension.getFacing());
+                int tc = (suspension.hasTire(SuspensionBlockEntity.WheelSide.LEFT) ? 1 : 0)
+                        + (suspension.hasTire(SuspensionBlockEntity.WheelSide.RIGHT) ? 1 : 0);
+                if (suspension.isFrontAxle()) {
+                    frontOmegaSum += suspension.averageDrivenOmega(sign) * tc;
+                    frontWheels += tc;
+                } else {
+                    rearOmegaSum += suspension.averageDrivenOmega(sign) * tc;
+                    rearWheels += tc;
+                }
+            }
+
+            double perWheelFront;
+            double perWheelRear;
+            if (frontWheels > 0 && rearWheels > 0) {
+                double bias = Config.CENTER_DIFF_FRONT_BIAS.getAsDouble();
+                double frontAvg = frontOmegaSum / frontWheels;
+                double rearAvg = rearOmegaSum / rearWheels;
+                double cap = Config.CENTER_DIFF_LOCK.getAsDouble() * Math.abs(totalTorque);
+                double transfer = Mth.clamp((frontAvg - rearAvg) * CENTER_DIFF_COUPLING, -cap, cap);
+                double frontTorque = totalTorque * bias - transfer;
+                double rearTorque = totalTorque * (1.0 - bias) + transfer;
+                perWheelFront = frontTorque / frontWheels;
+                perWheelRear = rearTorque / rearWheels;
+            } else {
+                double perWheel = totalTorque / wheelCount;
+                perWheelFront = perWheel;
+                perWheelRear = perWheel;
+            }
+
+            for (SuspensionBlockEntity suspension : axles) {
+                int sign = rotationDirection * facingSign(engineFacing, suspension.getFacing());
+                double perWheel = suspension.isFrontAxle() ? perWheelFront : perWheelRear;
                 suspension.applyDriveTorque(perWheel * sign, gameTime);
             }
         }
@@ -248,6 +291,20 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
         }
         // muting engine for now
         // playEngineSound(running);
+    }
+
+    public int getRotationDirection() {
+        return rotationDirection;
+    }
+
+    // +1 or -1 from user selection
+    public void toggleRotationDirection() {
+        if (level == null || level.isClientSide) {
+            return;
+        }
+        rotationDirection = -rotationDirection;
+        setChanged();
+        sendData();
     }
 
     // trying to auto-align the car, so +1 is the suspension facing same way as engine, -1 if opposite
@@ -660,6 +717,7 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
         tag.putFloat("Throttle", throttle);
         tag.putInt("PowerMode", powerMode);
         tag.putBoolean("TractionControl", tractionControl);
+        tag.putInt("RotationDirection", rotationDirection);
         drivetrain.save(tag);
         ContainerHelper.saveAllItems(tag, items, registries);
     }
@@ -671,6 +729,7 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
         throttle = tag.getFloat("Throttle");
         powerMode = tag.contains("PowerMode") ? Math.max(1, Math.min(MAX_POWER_MODE, tag.getInt("PowerMode"))) : MAX_POWER_MODE;
         tractionControl = tag.getBoolean("TractionControl");
+        rotationDirection = tag.getInt("RotationDirection") < 0 ? -1 : 1;
         drivetrain.load(tag);
         ContainerHelper.loadAllItems(tag, items, registries);
         for (int slot = 0; slot < SLOT_COUNT; slot++) {
