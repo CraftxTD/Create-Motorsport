@@ -246,9 +246,11 @@ public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityB
     }
 
     @Override
-    public @NotNull Direction sable$getNormal(BlockState state) {
+    @NotNull
+    public Direction sable$getNormal(BlockState state) {
         return state.getValue(FACING);
     }
+
 
     // force of the flap at 52.5321°
     @Override
