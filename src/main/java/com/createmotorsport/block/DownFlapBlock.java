@@ -265,6 +265,7 @@ public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityB
     public void sable$contributeLiftAndDrag(BlockSubLevelLiftProvider.LiftProviderContext ctx, ServerSubLevel subLevel, @NotNull Pose3d localPose, double timeStep, Vector3dc linearVelocity, Vector3dc angularVelocity, Vector3d linearImpulse, Vector3d angularImpulse, @Nullable BlockSubLevelLiftProvider.LiftProviderGroup group) {
         BlockSubLevelLiftProvider.resetVectors();
         BlockState state = ctx.state();
+        ctx.state();
         float angle = (float) state.getValue(DownFlapBlock.FLAP_POWER) / 30 * (float) Math.PI;
         float dragScalar = (float) (this.sable$getParallelDragScalar() * Math.sin(angle) * (1 - Math.cos(2 * angle)));
 
