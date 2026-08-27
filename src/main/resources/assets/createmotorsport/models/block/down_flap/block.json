@@ -4,7 +4,8 @@
 	"texture_size": [32, 32],
 	"textures": {
 		"4": "createmotorsport:block/down_flap/pillar",
-		"6": "createmotorsport:block/down_flap/wing"
+		"6": "createmotorsport:block/down_flap/wing",
+		"particle": "createmotorsport:block/down_flap/wing"
 	},
 	"elements": [
 		{
