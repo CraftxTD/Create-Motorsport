@@ -219,11 +219,9 @@ public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityB
             List<Direction> directions = IPlacementHelper.orderedByDistance(pos, ray.getLocation(), dir -> dir.getAxis() == axisFunction.apply(state));
             for (Direction dir : directions) {
                 int range = AllConfigs.server().equipment.placementAssistRange.get();
-                if (player != null) {
-                    AttributeInstance reach = player.getAttribute(Attributes.BLOCK_INTERACTION_RANGE);
-                    if (reach != null && reach.hasModifier(ExtendoGripItem.singleRangeAttributeModifier.id()))
-                        range += 4;
-                }
+                AttributeInstance reach = player.getAttribute(Attributes.BLOCK_INTERACTION_RANGE);
+                if (reach != null && reach.hasModifier(ExtendoGripItem.singleRangeAttributeModifier.id()))
+                    range += 4;
                 int poles = attachedPoles(world, pos, dir);
                 if (poles >= range)
                     continue;
@@ -267,7 +265,6 @@ public class DownFlapBlock extends HorizontalDirectionalBlock implements EntityB
     public void sable$contributeLiftAndDrag(BlockSubLevelLiftProvider.LiftProviderContext ctx, ServerSubLevel subLevel, @NotNull Pose3d localPose, double timeStep, Vector3dc linearVelocity, Vector3dc angularVelocity, Vector3d linearImpulse, Vector3d angularImpulse, @Nullable BlockSubLevelLiftProvider.LiftProviderGroup group) {
         BlockSubLevelLiftProvider.resetVectors();
         BlockState state = ctx.state();
-        ctx.state();
         float angle = (float) state.getValue(DownFlapBlock.FLAP_POWER) / 30 * (float) Math.PI;
         float dragScalar = (float) (this.sable$getParallelDragScalar() * Math.sin(angle) * (1 - Math.cos(2 * angle)));
 
