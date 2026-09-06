@@ -2,6 +2,7 @@ package com.createmotorsport.block.entity;
 
 import com.createmotorsport.Config;
 import com.createmotorsport.CreateMotorsport;
+import com.createmotorsport.block.DownFlapBlock;
 import com.createmotorsport.network.TelemetryLinePacket;
 import com.simibubi.create.Create;
 import com.simibubi.create.content.redstone.link.IRedstoneLinkable;
@@ -24,13 +25,8 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
-import java.util.Set;
-import java.util.UUID;
-import java.util.WeakHashMap;
+import java.util.*;
+
 
 public class SteeringWheelBlockEntity extends SmartBlockEntity {
     // menu ordering of the various keybinds
@@ -49,7 +45,8 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
         LIFT_UP("Lift Up"),
         LIFT_DOWN("Lift Down"),
         DIFF_MODE("Diff Mode"),
-        HUD_TOGGLE("HUD Toggle");
+        HUD_TOGGLE("HUD Toggle"),
+        DOWN_FLAP("Down Flap");
 
         private final String displayName;
 
@@ -357,11 +354,14 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
 
         EngineBlockEntity engine = null;
         List<SuspensionBlockEntity> suspensions = new ArrayList<>();
+        List<DownFlapBlockEntity> downflaps = new ArrayList<>();
         for (var actor : subLevel.getPlot().getBlockEntityActors()) {
             if (actor instanceof EngineBlockEntity e) {
                 engine = e;
             } else if (actor instanceof SuspensionBlockEntity s && !s.isRemoved()) {
                 suspensions.add(s);
+            } else if (actor instanceof DownFlapBlockEntity d && d.getBlockState().getValue(DownFlapBlock.PILLAR)) {
+                downflaps.add(d);
             }
         }
 
@@ -378,21 +378,25 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
             engine.setDriverAids(overtake, modeUp, modeDown, tractionControl);
             engine.setDriveMode(driveMode);
         }
-        if (suspensions.isEmpty()) {
-            return;
+        if (!suspensions.isEmpty()) {
+            // now that front axle is set by user, steering axle is way easier to decide
+            int liftDelta = Config.LIFT_STEPS_PER_PRESS.getAsInt();
+            for (SuspensionBlockEntity s : suspensions) {
+                if (liftUpEdge) {
+                    s.adjustLift(liftDelta);
+                } else if (liftDownEdge) {
+                    s.adjustLift(-liftDelta);
+                }
+                s.setDriftDiffMode(driftDiffMode);
+                s.setDriverSteering(s.isFrontAxle() ? steerSignal : 0.0, brakeSignal);
+            }
+
         }
 
 
-        // now that front axle is set by user, steering axle is way easier to decide
-        int liftDelta = Config.LIFT_STEPS_PER_PRESS.getAsInt();
-        for (SuspensionBlockEntity s : suspensions) {
-            if (liftUpEdge) {
-                s.adjustLift(liftDelta);
-            } else if (liftDownEdge) {
-                s.adjustLift(-liftDelta);
-            }
-            s.setDriftDiffMode(driftDiffMode);
-            s.setDriverSteering(s.isFrontAxle() ? steerSignal : 0.0, brakeSignal);
+        if (!downflaps.isEmpty()) {
+
+
         }
     }
 
