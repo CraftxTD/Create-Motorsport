@@ -146,6 +146,9 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
     private double clientWheelAngle;
     private double lastClientWheelAngle;
 
+    // If on -> drag activated
+    private boolean downFlapToggle = false;
+
     public static Iterable<SteeringWheelBlockEntity> clientLoaded() {
         return CLIENT_LOADED;
     }
@@ -340,13 +343,16 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
         int liftUpBit = 1 << SteeringControl.LIFT_UP.ordinal();
         int liftDownBit = 1 << SteeringControl.LIFT_DOWN.ordinal();
         int diffBit = 1 << SteeringControl.DIFF_MODE.ordinal();
+        int downFlapBit = 1 << SteeringControl.DOWN_FLAP.ordinal();
         boolean liftUpEdge = (inputMask & liftUpBit) != 0 && (prevMomentaryMask & liftUpBit) == 0;
         boolean liftDownEdge = (inputMask & liftDownBit) != 0 && (prevMomentaryMask & liftDownBit) == 0;
         boolean diffEdge = (inputMask & diffBit) != 0 && (prevMomentaryMask & diffBit) == 0;
+        boolean downFlapEdge = (inputMask & downFlapBit) != 0 && (prevMomentaryMask & downFlapBit) == 0;
         prevMomentaryMask = inputMask;
         if (diffEdge) {
             driftDiffMode = !driftDiffMode;
         }
+
 
         float throttle01 = driverThrottle01;
         double steerSignal = driverSteer01 * 15.0;
@@ -392,11 +398,14 @@ public class SteeringWheelBlockEntity extends SmartBlockEntity {
             }
 
         }
-
-
         if (!downflaps.isEmpty()) {
-
-
+            if (downFlapEdge) {
+                downFlapToggle = !downFlapToggle;
+                for (DownFlapBlockEntity d : downflaps) {
+                    DownFlapBlock block = (DownFlapBlock) d.getBlockState().getBlock();
+                    block.steeringBack(d.getBlockState(), d.getLevel(), d.getBlockPos(), downFlapToggle);
+                }
+            }
         }
     }
 

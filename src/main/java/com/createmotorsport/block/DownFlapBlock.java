@@ -132,7 +132,6 @@ public class DownFlapBlock extends HorizontalDirectionalBlock
                 return;
             }
             int power = 0;
-            int num = 50;
 
             if (state.getValue(PILLAR)) {
                 power = Math.min(level.getBestNeighborSignal(pos), be.getLimit());
@@ -151,6 +150,33 @@ public class DownFlapBlock extends HorizontalDirectionalBlock
         if (!level.getBlockTicks().willTickThisTick(pos, this))
             level.scheduleTick(pos, this, 1);
     }
+
+    // Called by steeringwheel toggle
+    public void steeringBack(BlockState state, Level level, BlockPos pos, boolean toggle) {
+        if (level == null || level.isClientSide) {
+            return;
+        }
+
+        updateConnection(level, pos, state);
+
+        Direction facing = state.getValue(FACING);
+        DownFlapBlockEntity be = (DownFlapBlockEntity) level.getBlockEntity(pos);
+        if (be == null) {
+            return;
+        }
+        int power = toggle ? Math.min(15, be.getLimit()) : 0;
+
+        state = state.setValue(FLAP_POWER, power);
+        level.setBlock(pos, state, 2);
+        be.changeState(power);
+        level.sendBlockUpdated(pos, state, state, 2);
+        updateNeighborFlap(level, pos, facing.getClockWise(), power);
+        updateNeighborFlap(level, pos, facing.getCounterClockWise(), power);
+
+        if (!level.getBlockTicks().willTickThisTick(pos, this))
+            level.scheduleTick(pos, this, 1);
+    }
+
 
     public void updateNeighborFlap(Level level, BlockPos pos, Direction direction, int power) {
         Stack<BlockPos> flapStack = new Stack<>();
