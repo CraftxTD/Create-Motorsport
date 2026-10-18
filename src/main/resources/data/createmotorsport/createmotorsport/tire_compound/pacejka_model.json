@@ -1,0 +1,7 @@
+{
+  "model": "pacejka",
+  "grip": 1.8,
+  "cornering_stiffness": 30.0,
+  "r_factor": 0.8,
+  "e_factor": 0.7
+}

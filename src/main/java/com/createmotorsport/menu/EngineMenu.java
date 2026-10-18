@@ -9,42 +9,35 @@ import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.AbstractContainerMenu;
-import net.minecraft.world.inventory.ContainerData;
-import net.minecraft.world.inventory.SimpleContainerData;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 
-// Again just a temporary menu because I needed one working, so based on my keyboard mods style
 public class EngineMenu extends AbstractContainerMenu {
     private static final int ENGINE_SLOT_COUNT = EngineBlockEntity.SLOT_COUNT;
     private static final int PLAYER_INVENTORY_START = ENGINE_SLOT_COUNT;
     private static final int PLAYER_INVENTORY_END = PLAYER_INVENTORY_START + 27;
     private static final int HOTBAR_END = PLAYER_INVENTORY_END + 9;
 
-    public static final int COMPONENT_Y = 44;
-    public static final int EXHAUST_X = 72;
-    public static final int INTAKE_X = 98;
-    public static final int CHANNEL_Y0 = 70;
+    public static final int CHANNEL_Y0 = 24;
     public static final int CHANNEL_ROW_H = 22;
     public static final int CHANNEL_SLOT_A_X = 120;
     public static final int CHANNEL_SLOT_B_X = 142;
-    public static final int INV_X = 20;
-
+    public static final int INV_X = 7;
 
     public static final int INV_Y = CHANNEL_Y0 + EngineBlockEntity.CHANNELS.length * CHANNEL_ROW_H + 12;
     public static final int HOTBAR_Y = INV_Y + 58;
 
-    // Readout easily can be synced here since I'm displaying on the dashboard anyway
-    private static final int DATA_RPM = 0;
-    private static final int DATA_GEAR = 1;
-    private static final int DATA_COUNT = 2;
-
     private final Container engineInventory;
-    private final ContainerData data;
     private final BlockPos enginePos;
+    private boolean canTune;
+
+    public EngineMenu(int containerId, Inventory playerInventory, BlockPos pos, boolean canTune) {
+        this(containerId, playerInventory, new SimpleContainer(ENGINE_SLOT_COUNT), null, pos);
+        this.canTune = canTune;
+    }
 
     public EngineMenu(int containerId, Inventory playerInventory, BlockPos pos) {
-        this(containerId, playerInventory, new SimpleContainer(ENGINE_SLOT_COUNT), null, pos);
+        this(containerId, playerInventory, pos, false);
     }
 
     public EngineMenu(int containerId, Inventory playerInventory, EngineBlockEntity engine) {
@@ -57,35 +50,7 @@ public class EngineMenu extends AbstractContainerMenu {
         this.enginePos = pos;
         checkContainerSize(engineInventory, ENGINE_SLOT_COUNT);
         this.engineInventory = engineInventory;
-        this.data = engine != null ? new ContainerData() {
-            @Override
-            public int get(int index) {
-                return index == DATA_RPM ? engine.getDisplayRpm() : engine.getGearCode();
-            }
-
-            @Override
-            public void set(int index, int value) {
-            }
-
-            @Override
-            public int getCount() {
-                return DATA_COUNT;
-            }
-        } : new SimpleContainerData(DATA_COUNT);
         engineInventory.startOpen(playerInventory.player);
-
-        addSlot(new Slot(engineInventory, EngineBlockEntity.SLOT_EXHAUST, EXHAUST_X, COMPONENT_Y) {
-            @Override
-            public boolean mayPlace(ItemStack stack) {
-                return stack.is(CreateMotorsport.EXHAUST_MANIFOLD.get());
-            }
-        });
-        addSlot(new Slot(engineInventory, EngineBlockEntity.SLOT_INTAKE, INTAKE_X, COMPONENT_Y) {
-            @Override
-            public boolean mayPlace(ItemStack stack) {
-                return stack.is(CreateMotorsport.AIR_INTAKE.get());
-            }
-        });
 
         for (ControlChannel channel : EngineBlockEntity.CHANNELS) {
             int y = CHANNEL_Y0 + channel.ordinal() * CHANNEL_ROW_H;
@@ -102,20 +67,17 @@ public class EngineMenu extends AbstractContainerMenu {
             addSlot(new Slot(playerInventory, column, INV_X + column * 18, HOTBAR_Y));
         }
 
-        addDataSlots(data);
+    }
+
+    public boolean canTune() {
+        return canTune;
     }
 
     public BlockPos getEnginePos() {
         return enginePos;
     }
 
-    public int getRpm() {
-        return data.get(DATA_RPM);
-    }
 
-    public int getGearCode() {
-        return data.get(DATA_GEAR);
-    }
 
     // Item slots for Redstone links
     private static class FrequencySlot extends Slot {

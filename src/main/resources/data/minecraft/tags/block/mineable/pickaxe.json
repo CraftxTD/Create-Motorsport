@@ -1,0 +1,22 @@
+{
+  "replace": false,
+  "values": [
+    "createmotorsport:fuel_pump",
+    "createmotorsport:fuel_tank",
+    "createmotorsport:fifth_wheel",
+    "createmotorsport:kingpin",
+    "createmotorsport:tow_ball",
+    "createmotorsport:coupling_head",
+    "createmotorsport:landing_legs",
+    "createmotorsport:trailer_control_panel",
+    "createmotorsport:large_fifth_wheel",
+    "createmotorsport:wide_kingpin",
+    "createmotorsport:engine_block",
+    "createmotorsport:truck_engine_block",
+    "createmotorsport:passenger_engine_block",
+    "createmotorsport:suspension",
+    "createmotorsport:passenger_suspension",
+    "createmotorsport:truck_suspension",
+    "createmotorsport:steering_wheel"
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "type": "clutch_lsd",
+  "anti_slip_torque": 600.0,
+  "drift_anti_slip_torque": 120.0,
+  "input": {
+    "engage_rate_nm_per_s": 900.0
+  }
+}

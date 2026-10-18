@@ -1,6 +1,6 @@
 package com.createmotorsport.item;
 
-import com.createmotorsport.client.SuspensionItemRenderer;
+import com.createmotorsport.client.render.SuspensionItemRenderer;
 import net.minecraft.client.renderer.BlockEntityWithoutLevelRenderer;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.level.block.Block;

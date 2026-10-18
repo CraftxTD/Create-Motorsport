@@ -1,0 +1,14 @@
+{
+  "type": "vertical_strut",
+  "natural_freq_hz": 1.8,
+  "damping_ratio": 0.3,
+  "ride_height": 0.2,
+  "track_width": 3.0,
+  "max_steer_degrees": 31.0,
+  "ackermann": -0.8,
+  "camber_deg": -1.0,
+  "damper": {
+    "knee_velocity": 0.19,
+    "blow_off_slope": 0.45
+  }
+}

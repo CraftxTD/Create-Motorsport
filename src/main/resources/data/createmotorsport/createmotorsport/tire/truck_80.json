@@ -1,0 +1,12 @@
+{
+  "compound": "createmotorsport:truck_80",
+  "design_mass_kg": 200,
+  "radius": 0.96875,
+  "rotation": [
+    90,
+    0,
+    0
+  ],
+  "vertical_deflection": 0.034,
+  "item": "createmotorsport:truck_tire"
+}

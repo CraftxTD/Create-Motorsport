@@ -1,0 +1,19 @@
+{
+  "idle_rpm": 750,
+  "redline_rpm": 6500,
+  "shift_up_rpm": 6200,
+  "shift_down_rpm": 2400,
+  "driveline_efficiency": 0.91,
+  "engine_brake_fraction": 0.18,
+  "engine_inertia": 0.26,
+  "final_drive": 6.25,
+  "real_vehicle_mass_kg": 1400,
+  "design_vehicle_mass_blocks": 75,
+  "torque_curve": [
+    { "rpm": 800,  "nm": 130 },
+    { "rpm": 1500, "nm": 350 },
+    { "rpm": 4400, "nm": 350 },
+    { "rpm": 5500, "nm": 293 },
+    { "rpm": 6500, "nm": 235 }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "compound": "createmotorsport:f1_slick_rear",
+  "design_mass_kg": 65,
+  "radius": 0.75,
+  "vertical_deflection": 0.024
+}

@@ -1,0 +1,19 @@
+{
+  "type": "sequential",
+  "forward_ratios": [2.600, 2.176, 1.842, 1.579, 1.381, 1.250],
+  "reverse_ratio": 2.600,
+  "semi_auto": true,
+  "shift_interrupt_time": 0.05,
+  "rev_match": true,
+  "clutch": {
+    "max_torque": 600.0,
+    "lock_stiffness": 350.0,
+    "engage_time": 0.20,
+    "launch_rpm": 7000.0,
+    "launch_grab": 0.80,
+    "hold_grab": 1.20,
+    "flare_band": 1950.0,
+    "dump_band": 3100.0,
+    "idle_creep": 0.10
+  }
+}

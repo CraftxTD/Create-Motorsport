@@ -12,7 +12,7 @@ import net.neoforged.neoforge.network.handling.IPayloadContext;
 
 
 // Client -> server; bind (keyCode), which is a GLFW code, or -1 to clear
-// Binds to (control) on the steering wheel at (pos). Sent while in the steering wheel menu from the key-capture UI
+// Binds (control) on the steering wheel at (pos), from SteeringKeysScreen's key capture
 public record SetSteeringKeyPacket(BlockPos pos, int control, int keyCode) implements CustomPacketPayload {
     public static final Type<SetSteeringKeyPacket> TYPE =
             new Type<>(ResourceLocation.fromNamespaceAndPath(CreateMotorsport.MODID, "set_steering_key"));

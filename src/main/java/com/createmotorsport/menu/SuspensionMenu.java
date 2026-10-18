@@ -13,28 +13,27 @@ import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 
 
-// Menu for the redstone links on suspension
-// Temporary, but I've made a ton of these in this style so I could just do this quickly to have something working
-
 public class SuspensionMenu extends AbstractContainerMenu {
     private static final int CONTROL_SLOT_COUNT = SuspensionBlockEntity.CONTROL_SLOT_COUNT;
     private static final int PLAYER_INVENTORY_START = CONTROL_SLOT_COUNT;
     private static final int PLAYER_INVENTORY_END = PLAYER_INVENTORY_START + 27;
     private static final int HOTBAR_END = PLAYER_INVENTORY_END + 9;
 
-    public static final int CHANNEL_Y0 = 58;
+    public static final int CHANNEL_Y0 = 24;
     public static final int CHANNEL_ROW_H = 20;
     public static final int CHANNEL_SLOT_A_X = 120;
     public static final int CHANNEL_SLOT_B_X = 142;
-    public static final int INV_X = 20;
-    public static final int INV_Y = 128;
+    public static final int INV_X = 7;
+    public static final int INV_Y = 110;
     public static final int HOTBAR_Y = INV_Y + 58;
 
     private final Container controls;
     private final BlockPos suspensionPos;
+    private boolean canTune;
 
-    public SuspensionMenu(int containerId, Inventory playerInventory, BlockPos pos) {
+    public SuspensionMenu(int containerId, Inventory playerInventory, BlockPos pos, boolean canTune) {
         this(containerId, playerInventory, new SimpleContainer(CONTROL_SLOT_COUNT), pos);
+        this.canTune = canTune;
     }
 
     public SuspensionMenu(int containerId, Inventory playerInventory, SuspensionBlockEntity suspension) {
@@ -73,6 +72,10 @@ public class SuspensionMenu extends AbstractContainerMenu {
         public int getMaxStackSize() {
             return 1;
         }
+    }
+
+    public boolean canTune() {
+        return canTune;
     }
 
     public BlockPos getSuspensionPos() {

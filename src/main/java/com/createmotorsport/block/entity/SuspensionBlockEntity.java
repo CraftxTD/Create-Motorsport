@@ -3,55 +3,55 @@ package com.createmotorsport.block.entity;
 import com.createmotorsport.Config;
 import com.createmotorsport.CreateMotorsport;
 import com.createmotorsport.block.SuspensionBlock;
-import com.createmotorsport.physics.TireModel;
-import com.createmotorsport.physics.TireSpec;
-import com.simibubi.create.Create;
-import com.simibubi.create.content.redstone.link.IRedstoneLinkable;
-import com.simibubi.create.content.redstone.link.RedstoneLinkNetworkHandler;
+import com.createmotorsport.effects.WheelEffects;
+import com.createmotorsport.physics.MassScale;
+import com.createmotorsport.physics.control.SteerAssist;
+import com.createmotorsport.physics.differential.AxleDiff;
+import com.createmotorsport.physics.spec.DifferentialSpec;
+import com.createmotorsport.physics.spec.SurfaceSpec;
+import com.createmotorsport.physics.spec.SuspensionSpec;
+import com.createmotorsport.physics.spec.TireSpec;
+import com.createmotorsport.physics.suspension.UnsprungSolver;
+import com.createmotorsport.physics.terrain.TerrainAssist;
+import com.createmotorsport.physics.vehicle.*;
+import com.createmotorsport.physics.world.Gravity;
+import com.createmotorsport.physics.world.Surfaces;
+import com.createmotorsport.physics.world.TerrainCast;
+import com.createmotorsport.redstone.LinkReceivers;
+import com.createmotorsport.registry.*;
+import com.createmotorsport.telemetry.WheelTelemetry;
+import com.createmotorsport.tune.SpecSlot;
+import com.createmotorsport.tune.Tunable;
+import com.createmotorsport.vehicle.AssembledCar;
+import com.createmotorsport.vehicle.CarAssembler;
 import com.simibubi.create.foundation.blockEntity.SmartBlockEntity;
 import com.simibubi.create.foundation.blockEntity.behaviour.BlockEntityBehaviour;
 import dev.ryanhcode.offroad.content.components.TireLike;
 import dev.ryanhcode.offroad.index.OffroadDataComponents;
-import net.createmod.catnip.data.Couple;
-import net.minecraft.world.SimpleContainer;
 import dev.ryanhcode.sable.Sable;
 import dev.ryanhcode.sable.api.block.BlockEntitySubLevelActor;
 import dev.ryanhcode.sable.api.math.OrientedBoundingBox3d;
 import dev.ryanhcode.sable.api.physics.force.ForceTotal;
 import dev.ryanhcode.sable.api.physics.handle.RigidBodyHandle;
 import dev.ryanhcode.sable.api.physics.mass.MassData;
-import dev.ryanhcode.sable.physics.config.dimension_physics.DimensionPhysicsData;
 import dev.ryanhcode.sable.companion.math.JOMLConversion;
 import dev.ryanhcode.sable.companion.math.Pose3d;
-import dev.ryanhcode.sable.companion.math.Pose3dc;
-import dev.ryanhcode.sable.mixinterface.clip_overwrite.ClipContextExtension;
 import dev.ryanhcode.sable.physics.config.block_properties.PhysicsBlockPropertyHelper;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import dev.ryanhcode.sable.sublevel.SubLevel;
-import it.unimi.dsi.fastutil.objects.ObjectOpenHashSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.core.NonNullList;
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.core.particles.BlockParticleOption;
-import net.minecraft.core.particles.ParticleOptions;
-import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.tags.BlockTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.ContainerHelper;
+import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.level.ClipContext;
-import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
-import net.minecraft.world.phys.BlockHitResult;
-import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
-import net.minecraft.world.phys.shapes.CollisionContext;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Vector3d;
 import software.bernie.geckolib.animatable.GeoBlockEntity;
@@ -61,79 +61,68 @@ import software.bernie.geckolib.animation.AnimationController;
 import software.bernie.geckolib.animation.PlayState;
 import software.bernie.geckolib.util.GeckoLibUtil;
 
-import java.util.Collection;
+import java.util.ArrayList;
 import java.util.List;
 
-public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEntitySubLevelActor, GeoBlockEntity {
+/**
+ * One axle and its two wheel corners
+ * Sable calls sable$physicsTick each substep, it gathers each CornerInput, runs Corner.step and queues the impulses
+ * for AssembledCar to flush. AssembledCar hands it the drive through setDrive
+ *
+ * HAS TO BE A SABLE ACTOR SO THAT AssembledCar.rebuild FINDS IT
+ * see vehicle/AssembledCar for a checklist when adding new kinds of Block Entities for a car
+ */
+public class SuspensionBlockEntity extends SmartBlockEntity implements com.createmotorsport.menu.PartPanel, BlockEntitySubLevelActor, GeoBlockEntity,
+        Tunable {
+
+    // ==========================================
+    // CONSTANTS / TYPES
+    // ==========================================
+
+    // see ConfiguredDrops
+    public static final java.util.Set<String> CONFIGURATION_KEYS = java.util.Set.of(
+            "Setup", "Differential", "SetupOverrides", "DifferentialOverrides", "FrontAxle", "Steered", "Controls");
+
     public static final double REST_LENGTH = 3.5 / 16.0;
-    private static final double TRACK_HALF_WIDTH = 25.0 / 16.0;
-    public static final double MAX_TRAVEL = 0.25;
+    private static final double BUMP_STOP_GAP = 0.04;
+    public static final double MAX_TRAVEL = REST_LENGTH - BUMP_STOP_GAP;
     public static final double MAX_DROOP_RENDER = 0.15;
     private static final double GROUND_MARGIN = 0.15;
-    private static final int SYNC_INTERVAL_TICKS = 2;
 
-    // User selected "lift height" on the suspension block menu. Mostly a temporary solution for offroading
-    // 8 is the steps of normal lift height, where going up to 24 goes past where the animation looks like it should allow
-    public static final double MAX_LIFT = MAX_TRAVEL + MAX_DROOP_RENDER;
+    public static final int TRACK_MIN_PX = 16;
+    public static final int TRACK_MAX_PX = 192;
+    public static final int TRACK_DEFAULT_PX = 50;
+    public static final double MAX_LIFT = 0.25 + MAX_DROOP_RENDER;
     public static final int LIFT_STEPS = 8;
-    public static final int MAX_LIFT_STEPS = 24;
     public static final double LIFT_STEP_HEIGHT = MAX_LIFT / LIFT_STEPS;
 
-    // Thermal model (Speed Dreams speedcoolm)
-    private static final double TIRE_SPEED_COOL = 0.25;
+    private static final int LIFT_STEPS_SANITY = 1000;
 
-    // Tire smoke tuning
-    private static final double SMOKE_HEAT_COLD_C = 60.0; // no smoke boost at/below this temp
-    private static final double SMOKE_HEAT_HOT_C = 130.0; // full smoke boost at/above this
-    private static final double SMOKE_DRIFT_SPEED = 0.09;
-    private static final double SMOKE_CLOUD_LEAN = 1.6;
-    private static final double SMOKE_CENTER_HEIGHT = 0.45;
-    private static final double SMOKE_H_SPREAD_RADIUS = 0.55;
-    private static final double SMOKE_H_SPREAD_BASE = 0.22;
-    private static final double SMOKE_V_SPREAD_RADIUS = 0.7;
-    private static final double SMOKE_DRIFT_MAX = 0.05;
-    private static final int SMOKE_MAX_PUFFS = 32;
+    // physics and sync
+    private static final double GRAVITY_READ_DIVISOR = 2.1; // this is a magic number from Sable's ServerSubLevel.prePhysicsTick that I need to fix some phantom force in the solver
+    private static final int SYNC_INTERVAL_TICKS = 2;
+    private static final CompoundTag NO_TIRE_OVERRIDES = new CompoundTag();
 
-    // Server-side registries for engine lookup and batched force flushing
-    private static final Collection<SuspensionBlockEntity> LOADED = new ObjectOpenHashSet<>();
-    private static final Collection<SuspensionBlockEntity> QUEUED = new ObjectOpenHashSet<>();
+    // redstone link channels
+    public static final SteerChannel[] CHANNELS = SteerChannel.values();
+    public static final int CONTROL_SLOT_COUNT = CHANNELS.length * 2;
+
+    public static int channelSlotA(SteerChannel channel) {
+        return channel.ordinal() * 2;
+    }
+
+    public static int channelSlotB(SteerChannel channel) {
+        return channel.ordinal() * 2 + 1;
+    }
 
     public enum WheelSide {
         LEFT, RIGHT
     }
 
-    public enum SuspensionSetting {
-        SOFT("Soft", 1.6, 0.35),
-        MEDIUM("Medium", 2.2, 0.55),
-        FIRM("Firm", 3.0, 0.70),
-        RACE("Race", 3.8, 0.90);
-
-        private final String displayName;
-        private final double naturalFreqHz;
-        private final double dampingRatio;
-
-        SuspensionSetting(String displayName, double naturalFreqHz, double dampingRatio) {
-            this.displayName = displayName;
-            this.naturalFreqHz = naturalFreqHz;
-            this.dampingRatio = dampingRatio;
+    public static class WheelState extends CornerState {
+        WheelState() {
+            super(REST_LENGTH);
         }
-
-        public String getDisplayName() {
-            return displayName;
-        }
-
-        public SuspensionSetting next() {
-            SuspensionSetting[] values = values();
-            return values[(ordinal() + 1) % values.length];
-        }
-    }
-
-    public static class WheelState {
-        // simulation (server)
-        double omega;
-        double springLength = REST_LENGTH;
-        boolean grounded;
-        double surfaceMu = 1.0;
 
         // interpolation (client)
         double clientSpringLength = REST_LENGTH;
@@ -141,58 +130,16 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         double angle;
         double lastAngle;
 
-        // tire placing animation (client): 0 = none, 1 = deployed
+        // tire placing animation (client), 0 = none, 1 = deployed
         double deploy;
         double lastDeploy;
 
-        // sync bookkeeping (server)
+        // sync
         double syncedOmega;
         double syncedSpringLength = REST_LENGTH;
 
-        // last used physics values, for csv logging
-        double telemLoad;
-        double telemSlipRatio;
-        double telemSlipAngleRad;
-        double telemVLon;
-        double telemVLat;
-        double telemLongForce;
-        double telemLatForce;
-        double telemWheelSpeed;
-        double telemCompression;
-        double telemBrakeTorque;
-        double telemGripMult = 1.0;
-        double telemPeakMu = 1.0;
-        double prevLongForce; // last longitudinal tire force, for the relaxation low-pass
-        double deflAlpha;     // lateral contact-patch deflection in (m), fiala lateral relaxation state
-        double latBristle;    // lateral bristle deflection in (m), TMeasy dahl stand-still model
-        double tireTemp = 20.0; // tire temperature (deg C), thermal model
-
-        // tire smoke
-        double smokeSeverity;
-        double smokeX, smokeY, smokeZ;
-        double smokeVx, smokeVy, smokeVz;
-        double smokeRadius = 0.5;
-        double smokeAccum;
-        BlockState smokeSurface;
+        final WheelEffects.State fx = new WheelEffects.State();
     }
-
-    // snapshot of a wheel's last physics step, for csv logging
-    public record WheelTelemetry(boolean grounded, double loadN, double slipRatio, double slipAngleDeg,
-                                 double vLonMs, double vLatMs, double longForceN, double latForceN,
-                                 double omega, double wheelSpeedMs, double springLenM, double compressionM,
-                                 double surfaceMu, double brakeTorqueNm, double gripMult, double driveTorqueNm,
-                                 double tireTempC) {
-    }
-
-    public WheelTelemetry getTelemetry(WheelSide side) {
-        WheelState w = getWheel(side);
-        return new WheelTelemetry(w.grounded, w.telemLoad, w.telemSlipRatio,
-                Math.toDegrees(w.telemSlipAngleRad), w.telemVLon, w.telemVLat, w.telemLongForce,
-                w.telemLatForce, w.omega, w.telemWheelSpeed, w.springLength, w.telemCompression,
-                w.surfaceMu * w.telemGripMult, w.telemBrakeTorque, w.telemGripMult, driveTorquePerWheel,
-                w.tireTemp);
-    }
-
 
     // redstone link control channels, used by steering menu
     public enum SteerChannel {
@@ -211,23 +158,54 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         }
     }
 
-    public static final SteerChannel[] CHANNELS = SteerChannel.values();
-    public static final int CONTROL_SLOT_COUNT = CHANNELS.length * 2;
+    // ==========================================
+    // STATE
+    // ==========================================
 
-    public static int channelSlotA(SteerChannel channel) {
-        return channel.ordinal() * 2;
-    }
-
-    public static int channelSlotB(SteerChannel channel) {
-        return channel.ordinal() * 2 + 1;
-    }
-
+    private final NonNullList<ItemStack> tires = NonNullList.withSize(2, ItemStack.EMPTY);
     private final WheelState leftWheel = new WheelState();
     private final WheelState rightWheel = new WheelState();
-    private final NonNullList<ItemStack> tires = NonNullList.withSize(2, ItemStack.EMPTY);
+
+    private boolean frontAxle; //defaults rear for now
+    @Nullable
+    private Boolean steered;
+
+    private final SpecSlot<SuspensionSpec> setupSlot;
+    private final SpecSlot<DifferentialSpec> differentialSlot = new SpecSlot<>("differential", "Differential",
+            SpecRegistries.DIFFERENTIAL, SpecCodecs.DIFFERENTIAL_SPEC, SpecRegistries.BUILT_IN_DIFFERENTIALS,
+            SpecRegistries::fittedDifferential, "Differential", SpecRegistries.DIFF_LSD);
+    private SuspensionSpec setup = SuspensionSpec.RACE;
+    private DifferentialSpec differential = DifferentialSpec.DEFAULT;
+    private final SpecOverrides.Memo<TireSpec> leftCompoundMemo = new SpecOverrides.Memo<>();
+    private final SpecOverrides.Memo<TireSpec> rightCompoundMemo = new SpecOverrides.Memo<>();
+
+    // packSetup cache
+    private SuspensionSpec resolvedFrom;
+    private boolean resolvedFront;
+    private SuspensionSpec resolvedPack;
+
+    // Ride height and track as steps
+    private int liftSteps;
+    private int trackWidthPx = TRACK_DEFAULT_PX;
+
+
+    private double sprungMassPerWheel = 1.0;
+    private double cachedCarMass = MassScale.REFERENCE_CAR_MASS;
+    private int cachedWheelCount = 4;
+    private double cachedCarSpeed;
+    private double cachedGravity = Gravity.DEFAULT;
+    private double cachedWheelbase;                          //wheelbase synced to client for Ackermann
+    private TerrainAssist.Level cachedTerrainAssist = TerrainAssist.Level.NORMAL;  // server only drivers choice for terrain assist
+    private boolean driftDiffMode;
+    private final Corner.Modes modes = new Corner.Modes();
+
+    // drive, brake and steering
+    private final AxleDiff drive = new AxleDiff();
+    private long driveTorqueGameTime = Long.MIN_VALUE;
+    private double brake01;
+    private final AxleSteering steering = new AxleSteering();
     private final ForceTotal forceTotal = new ForceTotal();
 
-    // two create redstone link frequency slots per named channel
     private final NonNullList<ItemStack> controlItems = NonNullList.withSize(CONTROL_SLOT_COUNT, ItemStack.EMPTY);
     private final SimpleContainer controls = new SimpleContainer(CONTROL_SLOT_COUNT) {
         @Override
@@ -240,124 +218,288 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
             SuspensionBlockEntity.this.setChanged();
         }
     };
-    private final int[] receivedSignals = new int[CHANNELS.length];
-    private final boolean[] registeredLinks = new boolean[CHANNELS.length];
-    private final IRedstoneLinkable[] channelLinks = new IRedstoneLinkable[CHANNELS.length];
-
-
+    private final LinkReceivers links = new LinkReceivers(this, controls, CHANNELS.length,
+            i -> channelSlotA(CHANNELS[i]), i -> channelSlotB(CHANNELS[i]));
     private double driverSteer; // -15 to 15, + is left
     private double driverBrake; // 0 to 15
     private long driverControlTime = Long.MIN_VALUE;
 
-    private SuspensionSetting setting = SuspensionSetting.MEDIUM;
-    private double driveTorquePerWheel;
-    private long driveTorqueGameTime = Long.MIN_VALUE;
-    private double brake01;
-    private double steerSignal;
-    private double chasingSteer;
-    private double lastChasingSteer;
+    // sync and client
     private int syncCooldown;
     private boolean syncDirty;
-    private int liftSteps;
-    private boolean driftDiffMode;
-
-    // defaults to rear axle, which means the user does need to change the other to 'front' for now, will fix later
-    private boolean frontAxle;
-
-
-
     private final AnimatableInstanceCache animationCache = GeckoLibUtil.createInstanceCache(this);
+
+    // ==========================================
+    // CONSTRUCTION / LIFECYCLE
+    // ==========================================
 
     public SuspensionBlockEntity(BlockPos pos, BlockState state) {
         super(CreateMotorsport.SUSPENSION_BLOCK_ENTITY.get(), pos, state);
+        this.setupSlot = new SpecSlot<>("setup", "Setup", SpecRegistries.SUSPENSION_SETUP, SpecCodecs.SUSPENSION_SPEC,
+                SpecRegistries.BUILT_IN_SETUPS, this::resolveSetup, "Setup", SuspensionSetting.defaultFor(state));
         for (int slot = 0; slot < CONTROL_SLOT_COUNT; slot++) {
             controls.setItem(slot, controlItems.get(slot));
         }
-        for (SteerChannel channel : CHANNELS) {
-            channelLinks[channel.ordinal()] = new ChannelLink(channel);
-        }
-    }
-
-    public SimpleContainer getControls() {
-        return controls;
     }
 
     @Override
     public void addBehaviours(List<BlockEntityBehaviour> behaviours) {
     }
 
-    // ===================================================
-    // GeckoLib (client)
-    // ========================
-
-    @Override
-    public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
-        controllers.add(new AnimationController<>(this, "idle", 0, state -> PlayState.STOP));
-    }
-
-    @Override
-    public AnimatableInstanceCache getAnimatableInstanceCache() {
-        return animationCache;
-    }
-
-    // =======================================
-    // Registry and batching force application
-    // ====================================
-
-    // =
     @Override
     public void initialize() {
         super.initialize();
         if (level != null && !level.isClientSide) {
-            LOADED.add(this);
             refreshLinkNetwork();
         }
+        CarAssembler.memberChanged(level);
     }
 
     @Override
     public void remove() {
-        LOADED.remove(this);
-        QUEUED.remove(this);
         removeLinks();
+        CarAssembler.memberChanged(level);
         super.remove();
     }
 
     @Override
     public void onChunkUnloaded() {
-        LOADED.remove(this);
-        QUEUED.remove(this);
         removeLinks();
+        CarAssembler.memberChanged(level);
         super.onChunkUnloaded();
     }
 
-    // =======================
-    // Steering chanels & redstone links
-    // ==========================
+    // ==========================================
+    // PART SCREEN / SETUP
+    // ==========================================
 
+    @Override
+    public com.createmotorsport.menu.PartKind partKind() {
+        return com.createmotorsport.menu.PartKind.SUSPENSION;
+    }
+
+    @Override
+    public java.util.List<net.minecraft.network.chat.Component> statusLines() {
+        java.util.List<net.minecraft.network.chat.Component> lines = new java.util.ArrayList<>();
+        lines.add(net.minecraft.network.chat.Component.literal("Setup: " + getSetupId().location().getPath()));
+        lines.add(net.minecraft.network.chat.Component.literal((isFrontAxle() ? "Front axle" : "Rear axle") + ", "
+                + (isSteered() ? "steered" : "fixed") + ", " + (isDriven() ? "driven" : "free")));
+        if (isDriven()) {
+            lines.add(net.minecraft.network.chat.Component.literal("Differential: "
+                    + getDifferential().type().id()));
+        }
+        for (WheelSide side : WheelSide.values()) {
+            ItemStack tire = getTire(side);
+            lines.add(net.minecraft.network.chat.Component.literal((side == WheelSide.LEFT ? "Left: " : "Right: "))
+                    .append(tire.isEmpty() ? net.minecraft.network.chat.Component.literal("no tyre")
+                            : tire.getHoverName()));
+        }
+        return lines;
+    }
 
     public boolean isFrontAxle() {
         return frontAxle;
     }
 
-    // Toggle front/rear from the menu; sendData() pushes the new state to clients for the button's label
+    // which end of the car this axle is on, for the wheelbase
     public void toggleAxleEnd() {
         if (level == null || level.isClientSide) {
             return;
         }
         frontAxle = !frontAxle;
+        refreshSetup();
         setChanged();
         sendData();
     }
 
-    public int getLiftSteps() {
-        return liftSteps;
+    public boolean isSteered() {
+        return steered != null ? steered : frontAxle;
+    }
+
+    public void toggleSteering() {
+        if (level == null || level.isClientSide) {
+            return;
+        }
+        steered = !isSteered();
+        setChanged();
+        sendData();
+    }
+
+    // Driven as in receives torque from the engine, not as in if a player is driving
+    public void toggleDriven() {
+        if (level == null || level.isClientSide) {
+            return;
+        }
+        setSetupOverride("driven", isDriven() ? "false" : "true");
+    }
+
+    public net.minecraft.resources.ResourceKey<SuspensionSpec> getSetupId() {
+        return setupSlot.id();
+    }
+
+    public String getSetupName() {
+        return SpecRegistries.displayName(setupSlot.id().location());
+    }
+
+    public SuspensionSpec getSetup() {
+        return setup;
+    }
+
+    public String cycleSetting() {
+        return cycleSetting(1);
+    }
+
+    public String cycleSetting(int step) {
+        setupSlot.cycle(registryAccess(), step);
+        refreshSetup();
+        notifyUpdate();
+        return getSetupName();
+    }
+
+    public String cycleDifferential() {
+        return cycleDifferential(1);
+    }
+
+    public String cycleDifferential(int step) {
+        differentialSlot.cycle(registryAccess(), step);
+        refreshSetup();
+        notifyUpdate();
+        return SpecRegistries.displayName(differentialSlot.id().location());
+    }
+
+    public net.minecraft.resources.ResourceKey<DifferentialSpec> getDifferentialId() {
+        return differentialSlot.id();
+    }
+
+    public DifferentialSpec getDifferential() {
+        return differential;
+    }
+
+    public boolean isDriven() {
+        SuspensionSpec spec = this.setup != null ? this.setup : packSetup();
+        return spec.drivenOr(!frontAxle);
+    }
+
+    public SuspensionSpec packSetup() {
+        return setupSlot.pack(registryAccess());
+    }
+
+    private SuspensionSpec resolveSetup(@Nullable net.minecraft.core.RegistryAccess access,
+                                        net.minecraft.resources.ResourceKey<SuspensionSpec> key) {
+        SuspensionSpec pack = SpecRegistries.fittedSetup(access, key, SuspensionSetting.fallbackFor(key));
+        if (pack.driven().isPresent()) {
+            return pack;
+        }
+        if (pack != resolvedFrom || frontAxle != resolvedFront) {
+            resolvedFrom = pack;
+            resolvedFront = frontAxle;
+            resolvedPack = pack.withDriven(!frontAxle);
+        }
+        return resolvedPack;
+    }
+
+    public DifferentialSpec packDifferential() {
+        return differentialSlot.pack(registryAccess());
+    }
+
+    public CompoundTag getSetupOverrides() {
+        return setupSlot.overrides();
+    }
+
+    public CompoundTag getDifferentialOverrides() {
+        return differentialSlot.overrides();
+    }
+
+    @Nullable
+    public String setSetupOverride(String path, String value) {
+        return tuneSection("setup").set(path, value);
+    }
+
+    public void clearSetupOverride(String path) {
+        tuneSection("setup").clear(path);
+    }
+
+    @Nullable
+    public String setDifferentialOverride(String path, String value) {
+        Tunable.Section<?> section = tuneSection("differential");
+        return section == null ? "this axle isnt driven, so it has no differential" : section.set(path, value);
+    }
+
+    public void clearDifferentialOverride(String path) {
+        Tunable.Section<?> section = tuneSection("differential");
+        if (section != null) {
+            section.clear(path);
+        }
+    }
+
+    @Override
+    public List<Tunable.Section<?>> tuneSections() {
+        Tunable.Section<?> setupSection = setupSlot.section(registryAccess(), this::overridesChanged,
+                this::cycleSetting);
+        Tunable.Section<?> differentialSection = differentialSlot.section(registryAccess(), this::overridesChanged,
+                this::cycleDifferential);
+        return isDriven() ? List.of(setupSection, differentialSection) : List.of(setupSection);
+    }
+
+    private void overridesChanged() {
+        refreshSetup();
+        setChanged();
+        sendData();
+    }
+
+    private void refreshSetup() {
+        this.setup = setupSlot.fitted(registryAccess());
+        this.differential = differentialSlot.fitted(registryAccess());
+        int maxLift = maxLiftSteps();
+        int specLift = Mth.clamp((int) Math.round(setup.rideHeight() / LIFT_STEP_HEIGHT), 0, maxLift);
+        int specTrack = Mth.clamp((int) Math.round(setup.trackWidth() * 16.0), TRACK_MIN_PX, TRACK_MAX_PX);
+        if (specLift != this.liftSteps || specTrack != this.trackWidthPx) {
+            this.liftSteps = specLift;
+            this.trackWidthPx = specTrack;
+            syncDirty = true;
+        }
+    }
+
+    @org.jetbrains.annotations.Nullable
+    private net.minecraft.core.RegistryAccess registryAccess() {
+        return this.level == null ? null : this.level.registryAccess();
+    }
+
+    // ==========================================
+    // RIDE HEIGHT / TRACK
+    // ==========================================
+
+    public boolean isLiftOverridden() {
+        return SpecOverrides.isSet(setupSlot.overrides(), "ride_height");
+    }
+
+    public boolean isTrackOverridden() {
+        return SpecOverrides.isSet(setupSlot.overrides(), "track_width");
+    }
+
+    public double trackWidth() {
+        return this.trackWidthPx / 16.0;
+    }
+
+    public double trackHalfWidth() {
+        return this.trackWidthPx / 32.0;
     }
 
     public double liftHeight() {
         return liftSteps * LIFT_STEP_HEIGHT;
     }
 
-    private double animatedLiftHeight() {
+    private static double liftHeight(int steps) {
+        return Math.round(steps * LIFT_STEP_HEIGHT * 1.0e6) / 1.0e6;
+    }
+
+    // in steps, 24 for every shipped setup
+    private int maxLiftSteps() {
+        return Math.max(0, (int) Math.round(setup.maxRideHeight() / LIFT_STEP_HEIGHT));
+    }
+
+    // the rest is breakawayDrop
+    public double animatedLiftHeight() {
         return Math.min(liftSteps, LIFT_STEPS) * LIFT_STEP_HEIGHT;
     }
 
@@ -370,178 +512,9 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         return REST_LENGTH + liftHeight();
     }
 
-    // user clicking the menu
-    public void adjustLift(int delta) {
-        if (level == null || level.isClientSide) {
-            return;
-        }
-        liftSteps = Mth.clamp(liftSteps + delta, 0, MAX_LIFT_STEPS);
-        setChanged();
-        sendData();
-    }
-
-    public void setDriverSteering(double steer, double brake) {
-        if (level == null || level.isClientSide) {
-            return;
-        }
-        driverSteer = Mth.clamp(steer, -15.0, 15.0);
-        driverBrake = Mth.clamp(brake, 0.0, 15.0);
-        driverControlTime = level.getGameTime();
-    }
-
-    // drifting mode set by driver that changes differential settings
-    public void setDriftDiffMode(boolean drift) {
-        driftDiffMode = drift;
-    }
-
-    // peak Mu for the HUD grip readout
-    public double getPeakMu(WheelSide side) {
-        return getWheel(side).telemPeakMu;
-    }
-
-    private boolean driverActive() {
-        return level != null && driverControlTime >= level.getGameTime() - 2;
-    }
-
-    private int channelSignal(SteerChannel channel) {
-        return receivedSignals[channel.ordinal()];
-    }
-
-    private boolean hasLink(SteerChannel channel) {
-        return !controls.getItem(channelSlotA(channel)).isEmpty()
-                || !controls.getItem(channelSlotB(channel)).isEmpty();
-    }
-
-    private void refreshLinkNetwork() {
-        if (level == null || level.isClientSide) {
-            return;
-        }
-        for (SteerChannel channel : CHANNELS) {
-            int i = channel.ordinal();
-            if (registeredLinks[i]) {
-                Create.REDSTONE_LINK_NETWORK_HANDLER.removeFromNetwork(level, channelLinks[i]);
-                registeredLinks[i] = false;
-            }
-            if (hasLink(channel)) {
-                Create.REDSTONE_LINK_NETWORK_HANDLER.addToNetwork(level, channelLinks[i]);
-                registeredLinks[i] = true;
-            } else {
-                receivedSignals[i] = 0;
-            }
-        }
-    }
-
-    private void removeLinks() {
-        if (level == null || level.isClientSide) {
-            return;
-        }
-        for (SteerChannel channel : CHANNELS) {
-            int i = channel.ordinal();
-            if (registeredLinks[i]) {
-                Create.REDSTONE_LINK_NETWORK_HANDLER.removeFromNetwork(level, channelLinks[i]);
-                registeredLinks[i] = false;
-            }
-        }
-    }
-
-    private class ChannelLink implements IRedstoneLinkable {
-        private final SteerChannel channel;
-
-        private ChannelLink(SteerChannel channel) {
-            this.channel = channel;
-        }
-
-        @Override
-        public int getTransmittedStrength() {
-            return 0;
-        }
-
-        @Override
-        public void setReceivedStrength(int power) {
-            receivedSignals[channel.ordinal()] = power;
-        }
-
-        @Override
-        public boolean isListening() {
-            return hasLink(channel);
-        }
-
-        @Override
-        public boolean isAlive() {
-            return level != null && !level.isClientSide && !isRemoved() && level.isLoaded(worldPosition);
-        }
-
-        @Override
-        public Couple<RedstoneLinkNetworkHandler.Frequency> getNetworkKey() {
-            return Couple.create(
-                    RedstoneLinkNetworkHandler.Frequency.of(controls.getItem(channelSlotA(channel))),
-                    RedstoneLinkNetworkHandler.Frequency.of(controls.getItem(channelSlotB(channel)))
-            );
-        }
-
-        @Override
-        public BlockPos getLocation() {
-            return worldPosition;
-        }
-    }
-
-
-    // server thread only; collection of all suspensions loaded, engines filters by sub-level.
-    public static Collection<SuspensionBlockEntity> allLoaded() {
-        return LOADED;
-    }
-
-
-    // applies queued force once per physics substep from the Sable pre-tick event
-    public static void flushBatchedForces(ServerLevel level, double timeStep) {
-        ObjectOpenHashSet<ServerSubLevel> dragged = new ObjectOpenHashSet<>();
-        for (SuspensionBlockEntity be : QUEUED) {
-            if (be.isRemoved()) {
-                continue;
-            }
-            SubLevel subLevel = Sable.HELPER.getContaining(be);
-            if (!(subLevel instanceof ServerSubLevel serverSubLevel)) {
-                continue;
-            }
-            RigidBodyHandle handle = RigidBodyHandle.of(serverSubLevel);
-            if (handle != null) {
-                if (dragged.add(serverSubLevel)) {
-                    applyDragCompensation(level, serverSubLevel, be.forceTotal, timeStep);
-                }
-                handle.applyForcesAndReset(be.forceTotal);
-            }
-        }
-        QUEUED.clear();
-    }
-
-
-    // fake force to counteract sables velocity-proportional linear damping (universal_drag)
-    // Due to scaling of forces in our units, this standard force is about 7x too strong,
-    // so this is still a cheap fix just to speed up the cars for now
-    private static void applyDragCompensation(ServerLevel level, ServerSubLevel subLevel,
-                                              ForceTotal forceTotal, double dt) {
-        double keep = Config.SABLE_DRAG_SCALE.getAsDouble();
-        if (keep >= 1.0) {
-            return; // full Sable drag, nothing to cancel
-        }
-        MassData massData = subLevel.getMassTracker();
-        if (massData == null || massData.isInvalid()) {
-            return;
-        }
-        double drag = DimensionPhysicsData.getUniversalDrag(level);
-        if (drag <= 0.0) {
-            return;
-        }
-        double mass = massData.getMass();
-        Vector3d localVel = subLevel.logicalPose().orientation()
-                .transformInverse(new Vector3d(subLevel.latestLinearVelocity));
-        Vector3d impulse = localVel.mul(mass * drag * (1.0 - keep) * dt);
-        forceTotal.applyLinearImpulse(impulse);
-    }
-
-    // ==============================================
-    // Game tick
-    // ===============================
+    // ==========================================
+    // GAME TICK
+    // ==========================================
 
     @Override
     public void tick() {
@@ -553,9 +526,18 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
             clientTick();
             return;
         }
+        AssembledCar car = CarAssembler.of(this);
+        if (car != null && car.steps(this)) {
+            // after the driver, so steer and brake are this tick's
+            car.gameTick(level);
+            return;
+        }
+        gameStep();
+    }
 
-
-        // trying to auto recognize steering signal on the same sub-level
+    // the car's step calls it, or the tick does for a loose axle
+    public void gameStep() {
+        refreshSetup();
         Direction facing = getFacing();
         double newSteer;
         double newBrake;
@@ -571,19 +553,18 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
             int adjacentBrake = level.getSignal(worldPosition.above(), Direction.UP);
             newBrake = Math.max(adjacentBrake, channelSignal(SteerChannel.BRAKE)) / 15.0;
         }
-        if (Math.abs(newSteer - steerSignal) > 0.05) {
-            steerSignal = newSteer;
+        if (steering.setSignal(newSteer)) {
             syncDirty = true;
         }
         brake01 = newBrake;
 
-        lastChasingSteer = chasingSteer;
-        chasingSteer = Mth.lerp(0.4, chasingSteer, steerSignal / 15.0 * Math.toRadians(Config.STEERING_MAX_DEGREES.getAsDouble()) * speedSteerLock());
+        steering.setLock(frontSlipLock());
+        steering.chase(maxSteerDegrees());
 
 
         // torque stops when engine stops ticking
         if (level.getGameTime() - driveTorqueGameTime > 3) {
-            driveTorquePerWheel = 0.0;
+            drive.clearDrive();
         }
 
         if (syncCooldown > 0) {
@@ -600,42 +581,8 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         }
 
         if (level instanceof ServerLevel serverLevel) {
-            emitTireSmoke(serverLevel, leftWheel);
-            emitTireSmoke(serverLevel, rightWheel);
+            WheelEffects.emit(serverLevel, worldPosition, leftWheel.fx, rightWheel.fx);
         }
-    }
-
-    private void emitTireSmoke(ServerLevel serverLevel, WheelState wheel) {
-        if (wheel.smokeSeverity <= 0.0) {
-            wheel.smokeAccum = 0.0;
-            return;
-        }
-        wheel.smokeAccum += wheel.smokeSeverity * Config.TIRE_SMOKE_DENSITY.getAsDouble();
-        int puffs = (int) wheel.smokeAccum;
-        if (puffs <= 0) {
-            return;
-        }
-        wheel.smokeAccum -= puffs;
-        puffs = Math.min(puffs, SMOKE_MAX_PUFFS);
-
-        ParticleOptions particle = smokeParticleFor(wheel.smokeSurface);
-        double r = wheel.smokeRadius;
-        double cx = wheel.smokeX + wheel.smokeVx * SMOKE_CLOUD_LEAN;
-        double cy = wheel.smokeY + r * SMOKE_CENTER_HEIGHT;
-        double cz = wheel.smokeZ + wheel.smokeVz * SMOKE_CLOUD_LEAN;
-        double hSpread = r * SMOKE_H_SPREAD_RADIUS + SMOKE_H_SPREAD_BASE;
-        double vSpread = r * SMOKE_V_SPREAD_RADIUS + 0.05;
-        serverLevel.sendParticles(particle, cx, cy, cz, puffs, hSpread, vSpread, hSpread, SMOKE_DRIFT_MAX);
-    }
-
-    // Will improve this later to be more data driven but for now this detects some surfaces to kick up dirt instead of smoke the tire
-    private ParticleOptions smokeParticleFor(BlockState surface) {
-        if (surface != null && Config.TIRE_SMOKE_GROUND_DUST.get()
-                && (surface.is(BlockTags.DIRT) || surface.is(BlockTags.SAND) || surface.is(BlockTags.SNOW)
-                    || surface.is(Blocks.GRAVEL))) {
-            return new BlockParticleOption(ParticleTypes.BLOCK, surface);
-        }
-        return ParticleTypes.CAMPFIRE_COSY_SMOKE;
     }
 
     private boolean wheelStateChangedEnough() {
@@ -647,34 +594,102 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         return false;
     }
 
-    // speed sensitive steering lock; one of the controller assists; 1/(1 + k*v^2)
-    private double speedSteerLock() {
-        double k = Config.STEER_SPEED_SENSITIVITY.getAsDouble();
-        if (k <= 0.0 || level == null) {
-            return 1.0;
-        }
-        double v = Sable.HELPER.getVelocity(level, Vec3.atCenterOf(worldPosition)).length();
-        return 1.0 / (1.0 + k * v * v);
-    }
-
     private void clientTick() {
-        lastChasingSteer = chasingSteer;
-        chasingSteer = Mth.lerp(0.4, chasingSteer, steerSignal / 15.0 * Math.toRadians(Config.STEERING_MAX_DEGREES.getAsDouble()) * speedSteerLock());
+        refreshSetup();
+        steering.chase(maxSteerDegrees());
         for (WheelSide side : WheelSide.values()) {
             WheelState w = getWheel(side);
             w.lastAngle = w.angle;
             w.angle += w.omega / 20.0;
             w.lastClientSpringLength = w.clientSpringLength;
             w.clientSpringLength = Mth.lerp(0.5, w.clientSpringLength, w.springLength);
-            // Ease the tire down when it is first installed (mirrors the wheel mount's drop-in).
             w.lastDeploy = w.deploy;
             w.deploy = Mth.lerp(0.25, w.deploy, hasTire(side) ? 1.0 : 0.0);
         }
     }
 
-    // =======================
-    // Physics substep
-    // ================
+
+    // ==========================================
+    // DRIVER CONTROLS / REDSTONE
+    // ==========================================
+
+    public void setDriverSteering(double steer, double brake) {
+        if (level == null || level.isClientSide) {
+            return;
+        }
+        driverSteer = Mth.clamp(steer, -15.0, 15.0);
+        driverBrake = Mth.clamp(brake, 0.0, 15.0);
+        driverControlTime = level.getGameTime();
+    }
+
+    private boolean driverActive() {
+        return level != null && driverControlTime >= level.getGameTime() - 2;
+    }
+
+    private int channelSignal(SteerChannel channel) {
+        return links.signal(channel.ordinal());
+    }
+
+    public SimpleContainer getControls() {
+        return controls;
+    }
+
+    private void refreshLinkNetwork() {
+        links.refresh();
+    }
+
+    private void removeLinks() {
+        links.remove();
+    }
+
+    // ==========================================
+    // STEERING
+    // ==========================================
+
+    // at the centerline, the wheels sit either side of it (see ackermannK)
+    public double maxSteerDegrees() {
+        return setup.maxSteerDegrees();
+    }
+
+    // k in cot(inner) - cot(outer) = k, from the setup's percentage and the car's proportions. 0 wheelbase is parallel
+    public double ackermannK() {
+        double wb = cachedWheelbase;
+        return setup.wheelSteerK(wb > 1.0e-6 ? trackWidth() / wb : 0.0);
+    }
+
+    // zero until this strut is part of a car
+    public double getWheelbase() {
+        return cachedWheelbase;
+    }
+
+    // see SteerAssist
+    private double frontSlipLock() {
+        // the assist reads front tyres, so a steered rear axle gets full lock for now
+        if (steering.assistOff() || level == null || !frontAxle) {
+            return 1.0;
+        }
+        Vec3 vel = Sable.HELPER.getVelocity(level, Vec3.atCenterOf(worldPosition));
+        if (Math.sqrt(vel.x * vel.x + vel.z * vel.z) * 3.6 <= setup.steerFullLockSpeed()) {
+            return 1.0;
+        }
+        return SteerAssist.frontLock(steering.angle(), fittedCorners(), maxSteerDegrees());
+    }
+
+    // server-side, current steer angle of this axle (rad)
+    public double getSteerAngleRad() {
+        return steering.angle();
+    }
+
+    // see Ackermann. A rear axle steers the other way for the same turn, so it's mirrored there and back, or its
+    // inner and outer wheels swap
+    public double wheelSteerAngle(double base, WheelSide side) {
+        return frontAxle ? Ackermann.wheelAngle(base, ackermannK(), side == WheelSide.RIGHT)
+                : -Ackermann.wheelAngle(-base, ackermannK(), side == WheelSide.RIGHT);
+    }
+
+    // ==========================================
+    // PHYSICS SUBSTEP / DRIVE
+    // ==========================================
 
     @Override
     public void sable$physicsTick(ServerSubLevel subLevel, RigidBodyHandle handle, double timeStep) {
@@ -687,119 +702,137 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
             return;
         }
 
+        AssembledCar car = CarAssembler.refreshed(level, subLevel, timeStep);
+        CarState.Body body = car == null ? null : car.state().body(subLevel.getUniqueId());
+        if (body != null) {
+            this.cachedCarMass = body.mass();
+            this.cachedCarSpeed = body.speed();
+            this.cachedWheelCount = Math.max(1, body.wheels());
+            this.sprungMassPerWheel = Math.max(1.0, body.mass()) / this.cachedWheelCount;
+        }
+        this.cachedGravity = Gravity.of(level);
+        refreshSetup();
+        if (car != null) {
+            this.cachedWheelbase = car.state().wheelbase();
+            mirrorAids(car.state().aids());
+        }
+
+        double traction = car == null ? 1.0 : car.state().traction().applied();
+        Corner.Axle axle = new Corner.Axle(setup, restLength(), MAX_TRAVEL, MAX_DROOP_RENDER, GROUND_MARGIN,
+                brake01, drive.torque() * traction, drive.stiffness() * traction, drive.min() * traction,
+                drive.max() * traction, cachedCarMass, cachedWheelCount, sprungMassPerWheel, cachedGravity,
+                cachedTerrainAssist, cachedCarSpeed);
+        boolean split = car != null && axle.driveStiffness() > 0.0;
+        boolean leftFitted = hasTire(WheelSide.LEFT);
+        boolean rightFitted = hasTire(WheelSide.RIGHT);
+        double diffTorque = drive.carried(split, leftFitted && rightFitted);
+        Corner.Axle left = split ? drive.warmStart(axle, true, diffTorque) : axle;
+        Corner.Axle right = split ? drive.warmStart(axle, false, -diffTorque) : axle;
         boolean queued = false;
-        queued |= stepWheel(WheelSide.LEFT, pose, massData, timeStep);
-        queued |= stepWheel(WheelSide.RIGHT, pose, massData, timeStep);
-        applyDifferential(timeStep);
-        if (queued) {
-            QUEUED.add(this);
+        queued |= stepWheel(WheelSide.LEFT, subLevel, pose, massData, left, timeStep);
+        queued |= stepWheel(WheelSide.RIGHT, subLevel, pose, massData, right, timeStep);
+        drive.stepped(traction, diffTorque);
+        if (split) {
+            // the car splits the drive across every driven wheel once they have all stepped, then calls finishDrive
+            car.queueSplit(this, drive.wheels(axle, diffTorque,
+                    leftFitted ? leftWheel : null, leftFitted ? wheelInertia(WheelSide.LEFT) : 0.0,
+                    rightFitted ? rightWheel : null, rightFitted ? wheelInertia(WheelSide.RIGHT) : 0.0));
+        } else {
+            finishDrive(timeStep);
+        }
+        if (queued && car != null) {
+            car.queueForces(this);
         }
     }
 
-
-    // Limited-slip differential model from vdrift (driveline.h solveDiffClutch2)
-    // the velocity constraint pulls the two wheels torward a shared speed, but the corrective torque is capped by
-    // an anti-slip limit so it slips instead of locking. antiSlip=0 is open differentials, big number is a spool
-    private void applyDifferential(double dt) {
-        if (!hasTire(WheelSide.LEFT) || !hasTire(WheelSide.RIGHT)) {
-            return;
+    // steer assist is synced because the client chases the steer angle too
+    private void mirrorAids(CarState.Aids aids) {
+        cachedTerrainAssist = aids.terrainAssist();
+        driftDiffMode = aids.driftDiff();
+        if (steering.setAssistOff(aids.steerAssistOff())) {
+            syncDirty = true;
         }
-        double antiSlip = (driftDiffMode ? Config.DIFFERENTIAL_ANTISLIP_DRIFT : Config.DIFFERENTIAL_ANTISLIP_TORQUE)
-                .getAsDouble();
-        if (antiSlip <= 0.0) {
-            return;
-        }
-        double inertiaL = wheelInertia(WheelSide.LEFT);
-        double inertiaR = wheelInertia(WheelSide.RIGHT);
-
-        // equal and opposite impulse driving two wheels to the same speed, clamped by anti-slip torque budget for the substep
-        double velErr = leftWheel.omega - rightWheel.omega;
-        double jointInertia = 1.0 / (1.0 / inertiaL + 1.0 / inertiaR);
-        double limit = antiSlip * dt;
-        double lambda = Mth.clamp(-velErr * jointInertia, -limit, limit);
-
-        leftWheel.omega += lambda / inertiaL;
-        rightWheel.omega -= lambda / inertiaR;
     }
 
-    private double wheelInertia(WheelSide side) {
-        TireLike tire = getTire(side).get(OffroadDataComponents.TIRE);
-        double radius = tire != null ? tire.radius() : REST_LENGTH;
-        return wheelInertia(radius);
-    }
-
-    // I = m*r^2
-    private static double wheelInertia(double radius) {
-        return Math.max(0.5, Config.WHEEL_MASS.getAsDouble() * radius * radius);
-    }
-
-    private boolean stepWheel(WheelSide side, Pose3d pose, MassData massData, double dt) {
+    private boolean stepWheel(WheelSide side, ServerSubLevel subLevel, Pose3d pose, MassData massData,
+                              Corner.Axle axle, double dt) {
         WheelState wheel = getWheel(side);
-        TireLike tire = getTire(side).get(OffroadDataComponents.TIRE);
-        if (tire == null) {
+        Gathered gathered = gatherCorner(side, wheel, subLevel, pose, massData, dt);
+        if (gathered == null) {
             wheel.grounded = false;
             wheel.springLength = Mth.lerp(0.5, wheel.springLength, restLength());
             return false;
+        }
+        CornerOutput out = Corner.step(axle, side == WheelSide.LEFT ? 1.0 : -1.0, gathered.in(), wheel,
+                modes, dt);
+        if (out == null) {
+            if (!wheel.grounded) {
+                wheel.fx.smokeSeverity = 0.0;
+            }
+            return false;
+        }
+        applyCorner(wheel, gathered, out, pose, massData, dt);
+        return true;
+    }
+
+    private record Gathered(CornerInput in, Vector3d hardpoint, Vector3d forward, Vector3d axle,
+                            Vector3d normal, TerrainCast.Result cast) {
+    }
+
+    @Nullable
+    private Gathered gatherCorner(WheelSide side, WheelState wheel, ServerSubLevel subLevel, Pose3d pose,
+                                  MassData massData, double dt) {
+        ItemStack stack = getTire(side);
+        TireLike tire = stack.get(OffroadDataComponents.TIRE);
+        if (tire == null) {
+            return null;
         }
 
         double radius = tire.radius();
         Direction facing = getFacing();
         Direction sideDir = getSideDirection(side);
         Vec3 hardpoint = Vec3.atCenterOf(worldPosition)
-                .add(sideDir.getStepX() * TRACK_HALF_WIDTH, 0.0, sideDir.getStepZ() * TRACK_HALF_WIDTH);
+                .add(sideDir.getStepX() * trackHalfWidth(), 0.0, sideDir.getStepZ() * trackHalfWidth());
         Vector3d hardpointJoml = JOMLConversion.toJOML(hardpoint);
 
         // Ackermann geometry on the steering now, so the outer and inner wheels have to take their own angles (see wheelSteerAngle)
-        double wheelSteer = wheelSteerAngle(chasingSteer, side);
+        double wheelSteer = wheelSteerAngle(steering.angle(), side);
         Vector3d forward = new Vector3d(facing.getStepX(), 0.0, facing.getStepZ()).rotateY(wheelSteer);
         Direction rightDir = facing.getClockWise();
         Vector3d axle = new Vector3d(rightDir.getStepX(), 0.0, rightDir.getStepZ()).rotateY(wheelSteer);
 
-        TerrainCastResult cast = castToTerrain(hardpoint, forward, pose);
-        double distance = cast.distance();
-        boolean grounded = distance <= restLength() + radius + GROUND_MARGIN;
-        wheel.grounded = grounded;
-        wheel.surfaceMu = cast.hitBlock() != null
-                ? fudgeFriction(PhysicsBlockPropertyHelper.getFriction(level.getBlockState(cast.hitBlock())))
-                : 1.0;
+        SubLevel self = Sable.HELPER.getContaining(this);
+        TerrainCast.Result cast = TerrainCast.cast(level, self, hardpoint, forward, axle, pose, radius,
+                getTire(side).getOrDefault(CreateMotorsport.TIRE_WIDTH, 0.0f));
+        if (cast.hit()) {
+            wheel.telem.rigidRaw = cast.rigid();
+            wheel.telem.hardpointY = hardpoint.y;
+        }
+        Vec3 forwardVec = JOMLConversion.toMojang(forward);
+        TerrainAssist.Probe probe = d -> TerrainCast.probe(level, self, hardpoint.add(forwardVec.scale(d)), pose, radius);
 
-        double wheelInertia = wheelInertia(radius);
-        double brakeTorque = brake01 * Config.BRAKE_STRENGTH.getAsDouble() * radius;
-
-        if (!grounded) {
-            wheel.springLength = Mth.clamp(Mth.lerp(0.4, wheel.springLength, restLength() + MAX_DROOP_RENDER),
-                    restLength() - MAX_TRAVEL, restLength() + MAX_DROOP_RENDER);
-            wheel.omega = TireModel.integrateSpin(wheel.omega, radius, wheelInertia, driveTorquePerWheel,
-                    brakeTorque, 0.0, wheel.omega * radius, dt) * 0.995;
-            wheel.telemLoad = 0.0;
-            wheel.telemLongForce = 0.0;
-            wheel.telemLatForce = 0.0;
-            wheel.telemSlipRatio = 0.0;
-            wheel.telemSlipAngleRad = 0.0;
-            wheel.telemVLon = 0.0;
-            wheel.telemVLat = 0.0;
-            wheel.telemCompression = 0.0;
-            wheel.telemBrakeTorque = brakeTorque;
-            wheel.telemWheelSpeed = wheel.omega * radius;
-            wheel.smokeSeverity = 0.0;
-            return false;
+        SurfaceSpec surface = SurfaceSpec.DRY_DEFAULT;
+        double surfaceMu = 1.0;
+        if (cast.hitBlock() != null) {
+            BlockState ground = level.getBlockState(cast.hitBlock());
+            surface = Surfaces.of(level, cast.hitBlock(), ground);
+            surfaceMu = surface == SurfaceSpec.DRY_DEFAULT
+                    ? TerrainCast.fudgeFriction(PhysicsBlockPropertyHelper.getFriction(ground))
+                    : surface.peakMu();
         }
 
-        wheel.springLength = Mth.clamp(distance - radius, restLength() - MAX_TRAVEL, restLength() + MAX_DROOP_RENDER);
-        double compression = Math.max(0.0, restLength() - wheel.springLength);
-
-        // mass per corner, Sable gives the exact jacobian denominator
-        double invNormalMass = massData.getInverseNormalMass(hardpointJoml, OrientedBoundingBox3d.UP);
-        if (invNormalMass <= 1.0e-9) {
-            return false;
-        }
-        double effectiveMass = 1.0 / invNormalMass;
-
-        Vector3d velocity = Sable.HELPER.getVelocity(level, hardpointJoml, new Vector3d());
+        Vector3d velocity = Sable.HELPER.getVelocity(level, subLevel, hardpointJoml, new Vector3d());
+        double airborneVel = velocity.y;
+        velocity.y += cachedGravity * dt / GRAVITY_READ_DIVISOR; // Sable does this same subtraction in ServerSubLevel.prePhysicsTick but doesnt expose it
         Vector3d localVelocity = pose.transformNormalInverse(velocity);
+        double hardpointVel = velocity.y;
 
-        double springForce = TireModel.suspensionForce(effectiveMass, setting.naturalFreqHz, setting.dampingRatio,
-                compression, localVelocity.y);
+        // this is the exact jacobian denominator. I was using this to size the spring and scale the contact load cap before, but that needs to be
+        // the corners static share
+        double invNormalMass = massData.getInverseNormalMass(hardpointJoml, OrientedBoundingBox3d.UP);
+        double rollMass = Config.TIRE_COMPLIANCE.get()
+                ? rollResponseMass(massData, hardpointJoml, invNormalMass) : Double.NaN;
+        double invAxleMass = massData.getInverseNormalMass(hardpointJoml, axle);
 
         // slope correction (got it from Bullet's clipped_inv_contact_dot_suspension)
         Vector3d hitNormal = new Vector3d(cast.normal().getStepX(), cast.normal().getStepY(), cast.normal().getStepZ());
@@ -812,486 +845,98 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         } else {
             hitNormal.normalize();
         }
-        springForce *= Mth.clamp(1.0 / Math.max(0.5, hitNormal.y), 1.0, 2.0);
-        springForce = Math.min(springForce, Config.MAX_CORNERING_G.getAsDouble() * effectiveMass * 9.81);
 
-        Vector3d springImpulse = new Vector3d(hitNormal).mul(springForce * dt);
+        TireSpec tireSpec = getTireSpec(side);
+        float designLoad = FittedTire.designLoad(stack, this.sprungMassPerWheel, cachedGravity);
+
+        CornerInput in = new CornerInput(radius,
+                cast.hit(), cast.rigid(), cast.castLift(), probe,
+                surface, surfaceMu,
+                airborneVel, hardpointVel,
+                localVelocity.dot(forward), localVelocity.dot(axle),
+                // hitNormal is already in body space here, so the velocity has to be rotated the same way before projecting
+                localVelocity.dot(hitNormal), localVelocity.length(),
+                hitNormal.y,
+                invNormalMass, rollMass, invAxleMass,
+                tireSpec, designLoad, tireRate(stack, radius),
+                stack.getOrDefault(CreateMotorsport.TIRE_VERTICAL_DAMPING, TireEntry.DEFAULT_VERTICAL_DAMPING),
+                FittedTire.mass(stack, cachedCarMass), level.getGameTime());
+        return new Gathered(in, hardpointJoml, forward, axle, hitNormal, cast);
+    }
+
+    private void applyCorner(WheelState wheel, Gathered gathered, CornerOutput out, Pose3d pose,
+                             MassData massData, double dt) {
+        Vector3d hardpointJoml = gathered.hardpoint();
+        Vector3d springImpulse = new Vector3d(gathered.normal()).mul(out.springForce() * dt);
         forceTotal.applyImpulseAtPoint(massData, hardpointJoml, springImpulse);
 
-
-        // DOWNFORCE -- so add onto this with the spoilers or wings. This is just user configured for now to apply 0.06 by default for test drive purposes
-        double airspeed = localVelocity.length();
-        double downforce = Config.AERO_DOWNFORCE.getAsDouble() * airspeed * airspeed;
-        if (downforce > 0.0) {
-            forceTotal.applyImpulseAtPoint(massData, hardpointJoml, new Vector3d(0.0, -downforce * dt, 0.0));
+        if (out.downforce() > 0.0) {
+            forceTotal.applyImpulseAtPoint(massData, hardpointJoml, new Vector3d(0.0, -out.downforce() * dt, 0.0));
         }
 
-        // ================================
-        // Load sensitive tire friction
-        // ===================================
-        double normalForce = springForce;
-        double vLon = localVelocity.dot(forward);
-        double vLat = localVelocity.dot(axle);
-
-
-        // ABS releases brake pressure on a wheel when the braking slip passes a threshold toward locking up,
-        // Proportional release and a default floor of 5%, disengages below 1.5m/s
-        if (brakeTorque > 0.0 && Config.ABS_ENABLED.get() && Math.abs(vLon) > Config.ABS_MIN_SPEED.getAsDouble()) {
-            double lockSlip = -(wheel.omega * radius - vLon) * Math.signum(vLon) / Math.max(Math.abs(vLon), 2.0);
-            double threshold = Config.ABS_SLIP_THRESHOLD.getAsDouble();
-            if (lockSlip > threshold) {
-                brakeTorque *= Mth.clamp(1.0 - (lockSlip - threshold) / threshold, 0.05, 1.0);
-            }
-        }
-
-        // per-axle tire tier so front grips better than rear, should help the turning be more natural
-        TireSpec tireSpec = TireSpec.fromConfig(isFrontAxle());
-
-        float designLoad = getTire(side).getOrDefault(CreateMotorsport.TIRE_DESIGN_LOAD, 0.0f);
-        double gripMult = TireModel.loadSensitivity(normalForce, designLoad, tireSpec);
-
-        // Thermal grip parabola peaks at optimal temp. From Speed Dreams: mu *= 1 - k*(T-Topt)^2
-        // k is set so grip = coldGripFactor at ambient, factor 1.0 would be off
-        double tempFactor = 1.0;
-        if (Config.TIRE_THERMAL_MODEL.get()) {
-            double topt = Config.TIRE_OPT_TEMP.getAsDouble();
-            double span = topt - Config.TIRE_AMBIENT_TEMP.getAsDouble();
-            double k = span != 0.0 ? (1.0 - Config.COLD_MU_FACTOR.getAsDouble()) / (span * span) : 0.0;
-            double dT = wheel.tireTemp - topt;
-            tempFactor = Mth.clamp(1.0 - k * dT * dT, 0.1, 1.0);
-        }
-        double effectiveMu = wheel.surfaceMu * gripMult * tempFactor;
-        wheel.telemGripMult = gripMult;
-        wheel.telemPeakMu = effectiveMu * tireSpec.grip(); // peak grip the tire can deliver right now
-
-        // non driving or braked wheels take from offroad wheel mount, just track ground so it cant start creating slip force and maybe wont roll as much
-        boolean powered = Math.abs(driveTorquePerWheel) > 1.0e-3 || brakeTorque > 1.0e-3;
-        double forwardImpulse;
-        double sideImpulse;
-
-        int tireModel = Config.TIRE_MODEL.getAsInt();
-
-        if (tireModel == 3) {
-
-            // --------------------------------------------------------------------------
-            // FIALA BRUSH TIRE MODEL 3
-            // Ported from Project Chrono
-
-            if (!powered) {
-                wheel.omega = vLon / radius;
-            }
-            double wheelSpeed = wheel.omega * radius;
-            double vRef = Math.max(Math.abs(vLon), Config.SIM_LOWSPEED_REF.getAsDouble());
-            double kappa = (wheelSpeed - vLon) / vRef;
-            double relaxLen = Math.max(Config.FIALA_RELAX_LENGTH.getAsDouble(), 1.0e-3);
-            double decayRate = vRef / relaxLen;
-            double decay = Math.exp(-decayRate * dt);
-            double tauEff = decayRate > 1.0e-9 ? (1.0 - decay) / decayRate : dt;
-            wheel.deflAlpha = wheel.deflAlpha * decay + vLat * tauEff;
-            double alpha = Math.atan2(wheel.deflAlpha, relaxLen);
-
-            double frictionScale = effectiveMu * tireSpec.grip();
-            double[] fiala = new double[2];
-            TireModel.fialaForces(fiala, kappa, alpha, normalForce,
-                    Config.FIALA_CSLIP.getAsDouble(), Config.FIALA_CALPHA.getAsDouble(),
-                    Config.FIALA_MU_MAX.getAsDouble(), Config.FIALA_MU_MIN.getAsDouble(), frictionScale);
-            double forwardForce = fiala[0];
-            double lateralForce = fiala[1];
-
-            if (!powered) {
-                forwardForce = -TireModel.rollingResistance(normalForce, vLon);
-            }
-            forwardForce = wheel.prevLongForce + (forwardForce - wheel.prevLongForce) * Config.TIRE_FORCE_RELAXATION.getAsDouble();
-            wheel.prevLongForce = forwardForce;
-
-            // low speed stabilizer because it is very jittery as of now
-            double speed = Math.sqrt(vLon * vLon + vLat * vLat);
-            double blendSpeed = Config.SIM_LOWSPEED_BLEND_MS.getAsDouble();
-            double invSideMass = massData.getInverseNormalMass(hardpointJoml, axle);
-            if (blendSpeed > 1.0e-6) {
-                double slipBlend = Mth.clamp(speed / blendSpeed, 0.0, 1.0);
-                double cancelForce = invSideMass > 1.0e-9 ? (-vLat / invSideMass * Config.LATERAL_GRIP_FRACTION.getAsDouble()) / dt : 0.0;
-                lateralForce = Mth.lerp(slipBlend, cancelForce, lateralForce);
-            }
-
-            forwardImpulse = forwardForce * dt;
-            sideImpulse = lateralForce * dt;
-
-            if (powered) {
-                wheel.omega = TireModel.integrateSpin(wheel.omega, radius, wheelInertia, driveTorquePerWheel,
-                        brakeTorque, forwardForce, vLon, dt);
-            }
-        } else if (tireModel == 2) {
-
-            //-----------------------------------------------------------------------------------
-            // PACEJKA COMBINED-SLIP TIRE MODEL 2
-
-
-            if (!powered) {
-                wheel.omega = vLon / radius;
-            }
-            double wheelSpeed = wheel.omega * radius;
-            double denom = Math.max(Math.abs(vLon), 2.0);
-            double slipLon = (wheelSpeed - vLon) / denom;
-            double slipLat = vLat / Math.max(Math.abs(vLon), 0.05);
-
-            // friction ellipse instead of circle for configurable lateral slipperiness
-            double latGrip = Config.SIM_LATERAL_GRIP.getAsDouble();
-            double slipLatEff = slipLat / latGrip;
-            double s = Math.sqrt(slipLon * slipLon + slipLatEff * slipLatEff);
-
-            double forwardForce = 0.0;
-            double lateralForce = 0.0;
-            if (s > 1.0e-5) {
-                double fMag = normalForce * effectiveMu * tireSpec.grip()
-                        * TireModel.slipCurve(Math.min(s, Config.SIM_SLIP_LIMIT.getAsDouble()),
-                                tireSpec.pacejkaB(), tireSpec.pacejkaC(), tireSpec.pacejkaE());
-                forwardForce = fMag * slipLon / s;
-                lateralForce = -fMag * slipLat / s;
-            }
-            if (!powered) {
-                forwardForce = -TireModel.rollingResistance(normalForce, vLon);
-            }
-            forwardForce = wheel.prevLongForce + (forwardForce - wheel.prevLongForce) * Config.TIRE_FORCE_RELAXATION.getAsDouble();
-            wheel.prevLongForce = forwardForce;
-
-            // low speed blending to make it stabilize and not jitter
-            double speed = Math.sqrt(vLon * vLon + vLat * vLat);
-            double slipBlend = Mth.clamp(speed / Config.SIM_LOWSPEED_BLEND_MS.getAsDouble(), 0.0, 1.0);
-            double invSideMass = massData.getInverseNormalMass(hardpointJoml, axle);
-            double cancelForce = invSideMass > 1.0e-9 ? (-vLat / invSideMass * Config.LATERAL_GRIP_FRACTION.getAsDouble()) / dt : 0.0;
-            lateralForce = Mth.lerp(slipBlend, cancelForce, lateralForce);
-
-            forwardImpulse = forwardForce * dt;
-            sideImpulse = lateralForce * dt;
-
-            if (powered) {
-                wheel.omega = TireModel.integrateSpin(wheel.omega, radius, wheelInertia, driveTorquePerWheel,
-                        brakeTorque, forwardForce, vLon, dt);
-            }
-        } else if (tireModel == 4) {
-
-            // --------------------------------------------------------------------------------
-            // TMEASY TIRE MODEL 4 (Rill), ported from Project Chrono's ChTMeasyTire
-            // See TireModel as well for more notes copied from source
-
-            if (!powered) {
-                wheel.omega = vLon / radius;
-            }
-            double wheelSpeed = wheel.omega * radius;
-
-            // Slip inputs, this part is from Chrono's ChTMeasyTire 'Synchronize', covering the slip inputs and configurable
-            // transport speed floor. Chrono used a tiny vnum of like 0.01 but due to our physics substeps this should be more like 1
-            double vta = Math.max(Math.abs(wheelSpeed), Config.SIM_LOWSPEED_REF.getAsDouble());
-            double sx = (wheelSpeed - vLon) / vta;
-            double sy = -vLat / vta;
-
-            // Chrono uses data driven tire inputs, instead we have estimatable values, inspired by a paper Dr. Rill wrote,
-            // titled: "An Engineer's Guess on Tyre Model Parameter Made Possible with Tmeasy"
-            double peakForce = normalForce * effectiveMu * tireSpec.grip();
-            double slideFrac = Config.TMEASY_SLIDE_GRIP.getAsDouble();
-            double fxm = peakForce, fym = peakForce;
-            double fxs = slideFrac * peakForce, fys = slideFrac * peakForce;
-            double sxm = Config.TMEASY_SLIP_PEAK_LONG.getAsDouble();
-            double sym = Config.TMEASY_SLIP_PEAK_LAT.getAsDouble();
-            double slideSlip = Config.TMEASY_SLIDE_SLIP_FACTOR.getAsDouble();
-            double sxs = sxm * slideSlip, sys = sym * slideSlip;
-            double stiffMult = Config.TMEASY_INITIAL_STIFFNESS.getAsDouble();
-            double dfx0 = stiffMult * fxm / sxm, dfy0 = stiffMult * fym / sym;
-
-            // This part also deviates a bit from Chrono because I was reading Dr. Rill's textbook, and wanted to try
-            // the refinement he suggests, its a combined slip normalization found in equations 3.129 - 3.140
-            // intended to rescale the two slip values (throttle/steer) so they are more comparable for a combined slip model
-            double fOverDf0X = fxm / dfx0;
-            double fOverDf0Y = fym / dfy0;
-            double shatX = sxm / (sxm + sym) + fOverDf0X / (fOverDf0X + fOverDf0Y);
-            double shatY = sym / (sxm + sym) + fOverDf0Y / (fOverDf0X + fOverDf0Y);
-            double sNx = sx / shatX;
-            double sNy = sy / shatY;
-            double sc = Math.hypot(sNx, sNy);
-            double cphi = sc > 1.0e-9 ? sNx / sc : Math.sqrt(0.5);
-            double sphi = sc > 1.0e-9 ? sNy / sc : Math.sqrt(0.5);
-            double df0 = Math.hypot(dfx0 * shatX * cphi, dfy0 * shatY * sphi);
-            double fm = Math.hypot(fxm * cphi, fym * sphi);
-            double sm = Math.hypot(sxm / shatX * cphi, sym / shatY * sphi);
-            double fs = Math.hypot(fxs * cphi, fys * sphi);
-            double ss = Math.hypot(sxs / shatX * cphi, sys / shatY * sphi);
-            double[] tm = new double[2];
-
-            // this part is from Chrono's ChTMeasyTire 'Advanced' & 'tmxy_combined'
-            TireModel.tmeasyCombined(tm, sc, df0, sm, fm, ss, fs);
-            double f = tm[0];
-            double forwardForce = sc > 1.0e-9 ? f * cphi : 0.0;
-            double lateralForce = sc > 1.0e-9 ? f * sphi : 0.0;
-
-            if (!powered) {
-                forwardForce = -TireModel.rollingResistance(normalForce, vLon);
-            }
-            forwardForce = wheel.prevLongForce + (forwardForce - wheel.prevLongForce) * Config.TIRE_FORCE_RELAXATION.getAsDouble();
-            wheel.prevLongForce = forwardForce;
-
-            // This part is Chrono's ChTMeasyTire  'CombinedCoulombForces', which is TMeasy's own Dahl bristle stand-still model
-            double relaxLen = Math.max(Config.FIALA_RELAX_LENGTH.getAsDouble(), 1.0e-3);
-            double fc = fym;
-            double fyBristle;
-            if (fc > 1.0e-6) {
-                double sigma0 = fc / relaxLen;
-                double invSideMass = massData.getInverseNormalMass(hardpointJoml, axle);
-                double effMass = invSideMass > 1.0e-9 ? 1.0 / invSideMass : 1.0;
-                double sigma1 = Config.TMEASY_BRISTLE_DAMPING.getAsDouble() * 2.0 * Math.sqrt(sigma0 * effMass);
-                double vWash = Math.max(Math.abs(vLat), Config.TMEASY_STANDSTILL_LEAK.getAsDouble());
-                double bry = wheel.latBristle;
-                double bryDot = vLat - sigma0 * bry * vWash / fc;
-                fyBristle = -(sigma0 * bry + sigma1 * bryDot);
-                // implicit BDF1 update of the bristle deflection (unconditionally stable)
-                wheel.latBristle = (fc * bry + fc * dt * vLat) / (fc + dt * sigma0 * vWash);
-                fyBristle = Mth.clamp(fyBristle, -fc, fc);
-            } else {
-                wheel.latBristle = 0.0;
-                fyBristle = 0.0;
-            }
-            // smooth blend from rest to steady curve at speed, from Chrono's ChTMeasyTire  'Advance'
-            double frT = Mth.clamp(Math.abs(vLon) / Config.TMEASY_STANDSTILL_SPEED.getAsDouble(), 0.0, 1.0);
-            double frBlend = frT * frT * (3.0 - 2.0 * frT);
-            lateralForce = Mth.lerp(frBlend, fyBristle, lateralForce);
-
-            forwardImpulse = forwardForce * dt;
-            sideImpulse = lateralForce * dt;
-
-            if (powered) {
-                wheel.omega = TireModel.integrateSpin(wheel.omega, radius, wheelInertia, driveTorquePerWheel,
-                        brakeTorque, forwardForce, vLon, dt);
-            }
-        } else {
-
-
-            // --------------------------------------------------------------------------------
-            // ARCADE TIRE MODEL 1
-
-            double tireForce;
-            if (powered) {
-                tireForce = TireModel.longitudinalForce(normalForce, effectiveMu, wheel.omega * radius, vLon, tireSpec);
-            } else {
-                wheel.omega = vLon / radius; // roll with the ground, no slip
-                tireForce = -TireModel.rollingResistance(normalForce, vLon);
-            }
-            // Speed-dreams runs FLOAT_RELAXATION2 on the tire force to relax longitudinal force towards its target, to damp oscillation
-            tireForce = wheel.prevLongForce + (tireForce - wheel.prevLongForce) * Config.TIRE_FORCE_RELAXATION.getAsDouble();
-            wheel.prevLongForce = tireForce;
-            forwardImpulse = tireForce * dt;
-
-            // cancel a fraction of the lateral velocity per substep same way Bullet does
-            double invSideMass = massData.getInverseNormalMass(hardpointJoml, axle);
-            sideImpulse = invSideMass > 1.0e-9 ? -vLat * (1.0 / invSideMass) * Config.LATERAL_GRIP_FRACTION.getAsDouble() : 0.0;
-
-            double maxImpulse = normalForce * effectiveMu * tireSpec.grip() * dt;
-            double ellipseScale = TireModel.frictionEllipseScale(forwardImpulse, sideImpulse, maxImpulse);
-            forwardImpulse *= ellipseScale;
-            sideImpulse *= ellipseScale;
-
-            if (powered) {
-                wheel.omega = TireModel.integrateSpin(wheel.omega, radius, wheelInertia, driveTorquePerWheel,
-                        brakeTorque, forwardImpulse / dt, vLon, dt);
-            }
-        }
-
-        //-----------------------------------------------------------------------
-
-
-        // recording the resolved physics for csv logging
-        wheel.telemLoad = normalForce;
-        wheel.telemVLon = vLon;
-        wheel.telemVLat = vLat;
-        wheel.telemSlipRatio = (wheel.omega * radius - vLon) / Math.max(Math.abs(vLon), 2.0);
-        wheel.telemSlipAngleRad = Math.atan2(vLat, Math.max(Math.abs(vLon), 0.05));
-        wheel.telemLongForce = forwardImpulse / dt;
-        wheel.telemLatForce = sideImpulse / dt;
-        wheel.telemWheelSpeed = wheel.omega * radius;
-        wheel.telemCompression = compression;
-        wheel.telemBrakeTorque = brakeTorque;
-
-        // Tire thermal update (Speed Dreams simuv4)
-        if (Config.TIRE_THERMAL_MODEL.get()) {
-            double slipVelLon = wheel.omega * radius - vLon;
-            double frictionWork = (Math.abs((forwardImpulse / dt) * slipVelLon)
-                    + Math.abs((sideImpulse / dt) * vLat)) * dt; // this would be joules this substep
-            wheel.tireTemp += frictionWork * Config.TIRE_HEATING_RATE.getAsDouble();
-            double ambient = Config.TIRE_AMBIENT_TEMP.getAsDouble();
-            wheel.tireTemp -= Config.TIRE_COOLING_RATE.getAsDouble()
-                    * (1.0 + TIRE_SPEED_COOL * Math.abs(vLon)) * (wheel.tireTemp - ambient) * dt;
-        }
-
-
-        // Forward forward at the wheel center, prevents barrel rolls. Thanks again bullet
         Vector3d contactPoint = new Vector3d(hardpointJoml).sub(0.0, wheel.springLength, 0.0);
-        forceTotal.applyImpulseAtPoint(massData, contactPoint, new Vector3d(forward).mul(forwardImpulse));
+        forceTotal.applyImpulseAtPoint(massData, contactPoint, new Vector3d(gathered.forward()).mul(out.forwardImpulse()));
 
         Vector3d sidePoint = new Vector3d(contactPoint);
         if (massData.getCenterOfMass() != null) {
             double heightAboveCom = contactPoint.y - massData.getCenterOfMass().y();
-            double rollInfluence = Config.ROLL_INFLUENCE.getAsDouble();
+            double rollInfluence = setup.rollInfluence();
             sidePoint.y -= heightAboveCom * (1.0 - rollInfluence);
         }
-        forceTotal.applyImpulseAtPoint(massData, sidePoint, new Vector3d(axle).mul(sideImpulse));
+        forceTotal.applyImpulseAtPoint(massData, sidePoint, new Vector3d(gathered.axle()).mul(out.sideImpulse()));
 
-        recordTireSmoke(wheel, pose, contactPoint, forward, axle, vLon, vLat, radius, cast);
-        return true;
+        CornerInput in = gathered.in();
+        WheelEffects.record(level, wheel.fx, wheel, pose, contactPoint, gathered.forward(), gathered.axle(),
+                in.vLon(), in.vLat(), in.radius(), gathered.cast());
     }
 
-    // Whether to smoke tires, for the server tick. Keeping it separate from force solver
-    private void recordTireSmoke(WheelState wheel, Pose3d pose, Vector3d contactPoint, Vector3d forward,
-                                 Vector3d axle, double vLon, double vLat, double radius, TerrainCastResult cast) {
-        if (!Config.TIRE_SMOKE.get()) {
-            wheel.smokeSeverity = 0.0;
-            return;
-        }
-        double speed = Math.hypot(vLon, vLat);
-        if (speed < Config.TIRE_SMOKE_MIN_SPEED.getAsDouble()) {
-            wheel.smokeSeverity = 0.0;
-            return;
-        }
-        // taking the worse of lateral or longitudinal slip to determine if slipping
-        double slipLong = Math.abs(wheel.telemSlipRatio);
-        double slipLat = Math.abs(Math.sin(wheel.telemSlipAngleRad));
-        double slip = Math.max(slipLong, slipLat);
-        double threshold = Config.TIRE_SMOKE_SLIP_THRESHOLD.getAsDouble();
-        if (slip < threshold) {
-            wheel.smokeSeverity = 0.0;
-            return;
-        }
-        double severity = Mth.clamp((slip - threshold) / (1.0 - threshold), 0.0, 1.0);
-
-        // temperature affects smoke levels
-        double heatBoost = Config.TIRE_SMOKE_HEAT_BOOST.getAsDouble();
-        double heat = Mth.clamp((wheel.tireTemp - SMOKE_HEAT_COLD_C) / (SMOKE_HEAT_HOT_C - SMOKE_HEAT_COLD_C), 0.0, 1.0);
-        wheel.smokeSeverity = severity * ((1.0 - heatBoost) + heatBoost * heat);
-
-        Vector3d groundLocal = new Vector3d(contactPoint).sub(0.0, radius - 0.05, 0.0);
-        Vec3 world = pose.transformPosition(JOMLConversion.toMojang(groundLocal));
-        wheel.smokeX = world.x;
-        wheel.smokeY = world.y;
-        wheel.smokeZ = world.z;
-        wheel.smokeRadius = radius;
-
-        Vector3d drift = new Vector3d(forward).mul(vLon - wheel.omega * radius).add(new Vector3d(axle).mul(vLat));
-        pose.transformNormal(drift);
-        double len = drift.length();
-        if (len > 1.0e-3) {
-            drift.div(len).mul(SMOKE_DRIFT_SPEED);
-        } else {
-            drift.set(0.0, 0.0, 0.0);
-        }
-        wheel.smokeVx = drift.x;
-        wheel.smokeVy = drift.y;
-        wheel.smokeVz = drift.z;
-
-        wheel.smokeSurface = cast.hitBlock() != null ? level.getBlockState(cast.hitBlock()) : null;
+    // The roll mode's mass at one corner, in kg
+    // Not responseMass. The issue is pencil shaped cars diverging real badly in roll mode
+    private double rollResponseMass(MassData massData, Vector3d hardpointJoml, double invCorner) {
+        Vector3d axleCentre = JOMLConversion.toJOML(Vec3.atCenterOf(worldPosition));
+        double invMid = massData.getInverseNormalMass(axleCentre, OrientedBoundingBox3d.UP);
+        return Corner.rollResponseMass(invCorner, invMid, cachedWheelCount);
     }
 
-    // wheel mount gives slight friction even at 0
-    private static double fudgeFriction(double realValue) {
-        return realValue < 1.0 ? 0.1 + 0.9 * realValue : realValue;
+    public ForceTotal forceTotal() {
+        return forceTotal;
     }
 
-    // =========================================================================
-    // Terrain raycast adapted from wheel mount
-    // =====================================================================
-
-    private record TerrainCastResult(double distance, @NotNull Direction normal,
-                                     @Nullable SubLevel hitSubLevel, @Nullable BlockPos hitBlock) {
-    }
-
-    private TerrainCastResult castToTerrain(Vec3 wheelCenter, Vector3d forward, Pose3dc pose) {
-        double minDistance = 5.0;
-        Direction minNormal = Direction.UP;
-        SubLevel minHitSubLevel = null;
-        BlockPos minHitBlock = null;
-
-        for (int i = -1; i <= 1; i++) {
-            Vec3 origin = wheelCenter.add(JOMLConversion.toMojang(forward).scale(i));
-
-            ClipContext clipContext = new ClipContext(origin, origin.subtract(0.0, 5.0, 0.0),
-                    ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, CollisionContext.empty());
-            ((ClipContextExtension) clipContext).sable$setIgnoredSubLevel(Sable.HELPER.getContaining(this));
-            BlockHitResult clipResult = level.clip(clipContext);
-
-            if (clipResult.getType() == HitResult.Type.MISS) {
-                continue;
-            }
-
-            SubLevel hitSubLevel = Sable.HELPER.getContaining(level, clipResult.getLocation());
-            Vec3 localHitPos = pose.transformPositionInverse(hitSubLevel == null
-                    ? clipResult.getLocation()
-                    : hitSubLevel.logicalPose().transformPosition(clipResult.getLocation()));
-
-            if (localHitPos.y > wheelCenter.y || origin.distanceTo(localHitPos) < 0.05) {
-                continue;
-            }
-
-            double dist = wheelCenter.y - localHitPos.y;
-            if (dist <= 1.0e-5) {
-                continue;
-            }
-
-            Direction dir = clipResult.getDirection();
-            Vector3d hitNormal = new Vector3d(dir.getStepX(), dir.getStepY(), dir.getStepZ());
-            if (hitSubLevel != null) {
-                hitSubLevel.logicalPose().transformNormal(hitNormal);
-            }
-            pose.transformNormalInverse(hitNormal);
-            if (hitNormal.dot(0.0, 1.0, 0.0) < 0.5) {
-                continue;
-            }
-
-            if (dist < minDistance) {
-                minDistance = dist;
-                minNormal = clipResult.getDirection();
-                minHitSubLevel = hitSubLevel;
-                minHitBlock = clipResult.getBlockPos();
-            }
-        }
-
-        return new TerrainCastResult(minDistance, minNormal, minHitSubLevel, minHitBlock);
-    }
-
-    // ===============================================
-    // Engine interface
-    // ===================
-
-    // called by an engine block on the same sublevel as suspension. Once per game tick. Torque is per wheel
-    public void applyDriveTorque(double torquePerWheel, long gameTime) {
-        if (gameTime == driveTorqueGameTime) {
-            driveTorquePerWheel += torquePerWheel;
-        } else {
-            driveTorquePerWheel = torquePerWheel;
-            driveTorqueGameTime = gameTime;
+    // written by AssembledCar's driveline before this axle steps
+    public void setDrive(double torquePerWheel, double stiffnessPerWheel, double min, double max) {
+        drive.setDrive(torquePerWheel, stiffnessPerWheel, min, max);
+        if (level != null) {
+            driveTorqueGameTime = level.getGameTime();
         }
     }
 
-    // average signed wheel speed (rad/s)
-    public double averageDrivenOmega(int sign) {
-        double sum = 0.0;
-        int count = 0;
-        for (WheelSide side : WheelSide.values()) {
-            if (hasTire(side)) {
-                sum += getWheel(side).omega;
-                count++;
-            }
-        }
-        return count == 0 ? 0.0 : sum / count * sign;
+    // see AxleDiff.passed
+    public double getDriveTorquePerWheel() {
+        return drive.passed();
     }
 
-    public boolean hasAnyTire() {
-        return hasTire(WheelSide.LEFT) || hasTire(WheelSide.RIGHT);
+    // each wheel's weight in the mean, and last substep's mean
+    public void setDriveSplit(double weight, double mean) {
+        drive.setSplit(weight, mean);
     }
 
-    public boolean hasTire(WheelSide side) {
-        return getTire(side).get(OffroadDataComponents.TIRE) != null;
+    // after the car's split, or at once on an axle it doesn't split
+    public void finishDrive(double dt) {
+        boolean leftFitted = hasTire(WheelSide.LEFT);
+        boolean rightFitted = hasTire(WheelSide.RIGHT);
+        boolean pair = leftFitted && rightFitted;
+        drive.finish(leftWheel, leftFitted, pair ? wheelInertia(WheelSide.LEFT) : 0.0,
+                rightWheel, rightFitted, pair ? wheelInertia(WheelSide.RIGHT) : 0.0,
+                isDriven(), differential, MassScale.measured(cachedCarMass), driftDiffMode, dt);
     }
 
-    // ===============================================================
-    // Tires
-    // =============
+    private double wheelInertia(WheelSide side) {
+        return FittedTire.inertia(getTire(side), cachedCarMass, REST_LENGTH);
+    }
+
+    // ==========================================
+    // TIRES
+    // ==========================================
 
     public ItemStack getTire(WheelSide side) {
         return tires.get(side.ordinal());
@@ -1322,18 +967,36 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         return tires;
     }
 
-    // =======================================================
-    // accessors
-    // =====================================
-
-
-    public SuspensionSetting getSetting() {
-        return setting;
+    public boolean hasAnyTire() {
+        return hasTire(WheelSide.LEFT) || hasTire(WheelSide.RIGHT);
     }
 
-    // server-side, current steer angle of this axle (rad)
-    public double getSteerAngleRad() {
-        return chasingSteer;
+    public boolean hasTire(WheelSide side) {
+        return getTire(side).get(OffroadDataComponents.TIRE) != null;
+    }
+
+    // what the driveline and traction control read
+    public List<CornerState> fittedCorners() {
+        List<CornerState> out = new ArrayList<>(2);
+        for (WheelSide side : WheelSide.values()) {
+            if (hasTire(side)) {
+                out.add(getWheel(side));
+            }
+        }
+        return out;
+    }
+
+    public double meanTireRadius() {
+        double sum = 0.0;
+        int n = 0;
+        for (WheelSide side : WheelSide.values()) {
+            TireLike tire = getTire(side).get(OffroadDataComponents.TIRE);
+            if (tire != null) {
+                sum += tire.radius();
+                n++;
+            }
+        }
+        return n == 0 ? 0.0 : sum / n;
     }
 
     public double getTireRadius() {
@@ -1346,10 +1009,62 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         return 0.0;
     }
 
-    public SuspensionSetting cycleSetting() {
-        setting = setting.next();
-        notifyUpdate();
-        return setting;
+    // see SpecOverrides.Memo
+    public TireSpec getTireSpec(WheelSide side) {
+        ItemStack stack = getTire(side);
+        return (side == WheelSide.LEFT ? leftCompoundMemo : rightCompoundMemo).get(SpecCodecs.TIRE_SPEC,
+                SpecRegistries.fittedCompound(registryAccess(), stack, isFrontAxle()),
+                stack.getOrDefault(CreateMotorsport.TIRE_COMPOUND_OVERRIDES, NO_TIRE_OVERRIDES));
+    }
+
+    public float foreignDesignLoad() {
+        return FittedTire.foreignDesignLoad(this.sprungMassPerWheel, cachedGravity);
+    }
+
+    // for SpecDump
+    public double tireRate(ItemStack stack, double radius) {
+        return FittedTire.verticalRate(stack, radius, this.sprungMassPerWheel, cachedGravity);
+    }
+
+    // ==========================================
+    // READOUTS FOR THE CAR / TELEMETRY / HUD
+    // ==========================================
+
+    public WheelTelemetry getTelemetry(WheelSide side) {
+        return WheelTelemetry.of(getWheel(side));
+    }
+
+    // peak Mu for the HUD grip readout
+    public double getPeakMu(WheelSide side) {
+        return getWheel(side).peakMu;
+    }
+
+    public double getCachedCarMass() {
+        return cachedCarMass;
+    }
+
+    public double getScaledWheelMass() {
+        return Corner.wheelMass(cachedCarMass);
+    }
+
+    public double getSprungMassPerWheel() {
+        return sprungMassPerWheel;
+    }
+
+    // omega*dt of the corner's body mode. Over 2 the integrator cant hold it,
+    // and if over Corner.MAX_BODY_MODE_OMEGA_DT this axle substeps to compensate
+    public double getBodyModeOmegaDt() {
+        return modes.bodyOmegaDt;
+    }
+
+    public double getRollModeOmegaDt() {
+        return modes.rollOmegaDt;
+    }
+
+    // the frequency the solver ran, after UnsprungSolver's detune
+    public double effectiveSpringFreqHz() {
+        return UnsprungSolver.detunedFreq(setup.naturalFreqHz(), modes.bodyOmegaDt, modes.rollOmegaDt,
+                Corner.MAX_BODY_MODE_OMEGA_DT);
     }
 
     public Direction getFacing() {
@@ -1365,28 +1080,23 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         return side == WheelSide.LEFT ? leftWheel : rightWheel;
     }
 
+    // ==========================================
+    // RENDERING (CLIENT)
+    // ==========================================
 
-    // Renderer accessors
+    @Override
+    public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
+        controllers.add(new AnimationController<>(this, "idle", 0, state -> PlayState.STOP));
+    }
+
+    @Override
+    public AnimatableInstanceCache getAnimatableInstanceCache() {
+        return animationCache;
+    }
+
     public float getLerpedSpringLength(WheelSide side, float partialTicks) {
         WheelState w = getWheel(side);
         return (float) Mth.lerp(partialTicks, w.lastClientSpringLength, w.clientSpringLength);
-    }
-
-    public static final double RENDER_REST_RAISE = 0.8;
-
-    private double springToRaise(double springLength) {
-        double animSpring = springLength - breakawayDrop();
-        double droopSpan = MAX_DROOP_RENDER + animatedLiftHeight();
-        if (animSpring >= REST_LENGTH) {
-            double t = Mth.clamp((animSpring - REST_LENGTH) / droopSpan, 0.0, 1.0);
-            return RENDER_REST_RAISE * (1.0 - t);
-        }
-        double t = Mth.clamp((REST_LENGTH - animSpring) / MAX_TRAVEL, 0.0, 1.0);
-        return RENDER_REST_RAISE + (1.0 - RENDER_REST_RAISE) * t;
-    }
-
-    public float getLerpedRaise(WheelSide side, float partialTicks) {
-        return (float) springToRaise(getLerpedSpringLength(side, partialTicks));
     }
 
     public float getLerpedAngle(WheelSide side, float partialTicks) {
@@ -1395,23 +1105,7 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
     }
 
     public float getLerpedSteer(float partialTicks) {
-        return (float) Mth.lerp(partialTicks, lastChasingSteer, chasingSteer);
-    }
-
-
-    // Ackermann geometry for the steering; >0 = anti-Ackermann (outer sharper), <0 = classic Ackermann (inner sharper), 0 = parallel
-    public double wheelSteerAngle(double base, WheelSide side) {
-        double k = Config.STEERING_ANTI_ACKERMANN.getAsDouble();
-        if (k == 0.0 || base == 0.0) {
-            return base;
-        }
-        boolean rightIsOuter = base > 0.0;
-        boolean isOuter = (side == WheelSide.RIGHT) == rightIsOuter;
-        boolean larger = (k > 0.0) == isOuter;
-        double half = 0.5 * Math.abs(k);
-        double t = Math.tan(Math.abs(base));
-        double denom = Math.max(0.3, larger ? 1.0 - half * t : 1.0 + half * t);
-        return Math.copySign(Math.atan(t / denom), base);
+        return (float) steering.lerpedAngle(partialTicks);
     }
 
     public float getLerpedSteer(WheelSide side, float partialTicks) {
@@ -1429,9 +1123,9 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         return new AABB(worldPosition).inflate(2.5, 2.0, 2.5);
     }
 
-    // ==============================================================
+    // ==========================================
     // NBT
-    // ===============================
+    // ==========================================
 
     @Override
     protected void write(CompoundTag tag, HolderLookup.Provider registries, boolean clientPacket) {
@@ -1440,15 +1134,23 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         CompoundTag controlsTag = new CompoundTag();
         ContainerHelper.saveAllItems(controlsTag, controlItems, registries);
         tag.put("Controls", controlsTag);
-        tag.putString("Setting", setting.name());
+        setupSlot.write(tag);
+        differentialSlot.write(tag);
         tag.putBoolean("FrontAxle", frontAxle);
-        tag.putInt("LiftSteps", liftSteps);
+        if (steered != null) {
+            tag.putBoolean("Steered", steered);
+        }
         if (clientPacket) {
-            tag.putDouble("SteerSignal", steerSignal);
+            tag.putInt("LiftSteps", liftSteps);
+            tag.putInt("TrackWidthPx", trackWidthPx);
+            tag.putDouble("SteerSignal", steering.signal());
+            tag.putFloat("SteerLock", (float) steering.lock());
+            tag.putBoolean("SteerAssistOff", steering.assistOff());
             tag.putFloat("LeftOmega", (float) leftWheel.omega);
             tag.putFloat("RightOmega", (float) rightWheel.omega);
             tag.putFloat("LeftSpring", (float) leftWheel.springLength);
             tag.putFloat("RightSpring", (float) rightWheel.springLength);
+            tag.putFloat("Wheelbase", (float) cachedWheelbase);
         }
     }
 
@@ -1469,19 +1171,46 @@ public class SuspensionBlockEntity extends SmartBlockEntity implements BlockEnti
         }
         refreshLinkNetwork();
 
-        try {
-            setting = SuspensionSetting.valueOf(tag.getString("Setting"));
-        } catch (IllegalArgumentException ignored) {
-            setting = SuspensionSetting.MEDIUM;
-        }
+        setupSlot.read(tag, () -> {
+            try {
+                return SuspensionSetting.valueOf(tag.getString("Setting")).key();
+            } catch (IllegalArgumentException ignored) {
+                return SuspensionSetting.defaultFor(getBlockState());
+            }
+        });
+        differentialSlot.read(tag, () -> SpecRegistries.DIFF_LSD);
         frontAxle = tag.getBoolean("FrontAxle");
-        liftSteps = Mth.clamp(tag.getInt("LiftSteps"), 0, MAX_LIFT_STEPS);
+        steered = tag.contains("Steered") ? tag.getBoolean("Steered") : null;
+        if (!clientPacket) {
+            migrateGeometry(tag);
+        }
         if (clientPacket) {
-            steerSignal = tag.getDouble("SteerSignal");
+            liftSteps = Mth.clamp(tag.getInt("LiftSteps"), 0, LIFT_STEPS_SANITY);
+            trackWidthPx = Mth.clamp(tag.getInt("TrackWidthPx"), TRACK_MIN_PX, TRACK_MAX_PX);
+        }
+        if (clientPacket) {
+            steering.readSynced(tag.getDouble("SteerSignal"), tag.contains("SteerLock") ? tag.getFloat("SteerLock") : 1.0,
+                    tag.getBoolean("SteerAssistOff"));
             leftWheel.omega = tag.getFloat("LeftOmega");
             rightWheel.omega = tag.getFloat("RightOmega");
             leftWheel.springLength = tag.getFloat("LeftSpring");
             rightWheel.springLength = tag.getFloat("RightSpring");
+            cachedWheelbase = tag.getFloat("Wheelbase");
         }
+    }
+
+    private void migrateGeometry(CompoundTag tag) {
+        int lift = tag.contains("LiftStepsOverride") ? tag.getInt("LiftStepsOverride")
+                : tag.contains("LiftSteps") ? Mth.clamp(tag.getInt("LiftSteps"), 0, LIFT_STEPS_SANITY) : -1;
+        int track = tag.contains("TrackWidthOverridePx") ? tag.getInt("TrackWidthOverridePx")
+                : tag.contains("TrackWidthPx") ? tag.getInt("TrackWidthPx") : -1;
+        CompoundTag migrated = setupSlot.overrides().copy();
+        if (lift >= 0 && !SpecOverrides.isSet(migrated, "ride_height")) {
+            migrated.putDouble("ride_height", liftHeight(lift));
+        }
+        if (track >= 0 && !SpecOverrides.isSet(migrated, "track_width")) {
+            migrated.putDouble("track_width", Mth.clamp(track, TRACK_MIN_PX, TRACK_MAX_PX) / 16.0);
+        }
+        setupSlot.setOverrides(migrated);
     }
 }
