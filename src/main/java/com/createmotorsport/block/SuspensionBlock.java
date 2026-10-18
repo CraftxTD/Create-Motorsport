@@ -3,20 +3,21 @@ package com.createmotorsport.block;
 import com.createmotorsport.CreateMotorsport;
 import com.createmotorsport.block.entity.SuspensionBlockEntity;
 import com.createmotorsport.block.entity.SuspensionBlockEntity.WheelSide;
-import com.createmotorsport.menu.SuspensionMenu;
 import com.mojang.serialization.MapCodec;
+import com.simibubi.create.content.equipment.wrench.IWrenchable;
+import com.simibubi.create.content.equipment.wrench.WrenchItem;
 import dev.ryanhcode.offroad.index.OffroadDataComponents;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.Containers;
-import net.minecraft.world.SimpleMenuProvider;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.ItemInteractionResult;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.context.BlockPlaceContext;
+import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
@@ -36,11 +37,10 @@ import net.minecraft.world.phys.shapes.Shapes;
 import net.minecraft.world.phys.shapes.VoxelShape;
 import org.jetbrains.annotations.Nullable;
 
-public class SuspensionBlock extends HorizontalDirectionalBlock implements EntityBlock {
+public class SuspensionBlock extends HorizontalDirectionalBlock implements EntityBlock, IWrenchable {
     public static final MapCodec<SuspensionBlock> CODEC = simpleCodec(SuspensionBlock::new);
     // Making it a full block for now because the underside chassis kept getting caught on the ridge between the suspension and the next block
     private static final VoxelShape SHAPE = Shapes.block();
-    private static final Component STEERING_TITLE = Component.translatable("container.createmotorsport.suspension");
 
     public SuspensionBlock(BlockBehaviour.Properties properties) {
         super(properties);
@@ -81,6 +81,9 @@ public class SuspensionBlock extends HorizontalDirectionalBlock implements Entit
     @Override
     protected ItemInteractionResult useItemOn(ItemStack stack, BlockState state, Level level, BlockPos pos,
                                               Player player, InteractionHand hand, BlockHitResult hitResult) {
+        if (stack.getItem() instanceof WrenchItem) {
+            return ItemInteractionResult.SKIP_DEFAULT_BLOCK_INTERACTION;
+        }
         if (stack.get(OffroadDataComponents.TIRE) == null) {
             return ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION;
         }
@@ -101,13 +104,39 @@ public class SuspensionBlock extends HorizontalDirectionalBlock implements Entit
     }
 
     @Override
+    public InteractionResult onWrenched(BlockState state, UseOnContext context) {
+        return cycle(context, false);
+    }
+
+    @Override
+    public InteractionResult onSneakWrenched(BlockState state, UseOnContext context) {
+        return cycle(context, true);
+    }
+
+    private static InteractionResult cycle(UseOnContext context, boolean differential) {
+        Level level = context.getLevel();
+        if (!(level.getBlockEntity(context.getClickedPos()) instanceof SuspensionBlockEntity suspension)) {
+            return InteractionResult.PASS;
+        }
+        if (!level.isClientSide) {
+            String message = differential
+                    ? "Differential: " + suspension.cycleDifferential()
+                    : "Suspension: " + suspension.cycleSetting() + "  (sneak-click for differential)";
+            if (context.getPlayer() != null) {
+                context.getPlayer().displayClientMessage(Component.literal(message), true);
+            }
+            IWrenchable.playRotateSound(level, context.getClickedPos());
+        }
+        return InteractionResult.sidedSuccess(level.isClientSide);
+    }
+
+    @Override
     protected InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player,
                                                BlockHitResult hitResult) {
         if (!(level.getBlockEntity(pos) instanceof SuspensionBlockEntity suspension)) {
             return InteractionResult.PASS;
         }
 
-        // Sneak-click to remove tire, normal click to open menu for redstone links
         if (player.isShiftKeyDown()) {
             WheelSide side = sideFromHit(state, pos, hitResult);
             if (!level.isClientSide) {
@@ -122,11 +151,8 @@ public class SuspensionBlock extends HorizontalDirectionalBlock implements Entit
             return InteractionResult.sidedSuccess(level.isClientSide);
         }
 
-        if (!level.isClientSide && level.getBlockEntity(pos) instanceof SuspensionBlockEntity be) {
-            player.openMenu(new SimpleMenuProvider(
-                    (containerId, playerInventory, menuPlayer) -> new SuspensionMenu(containerId, playerInventory, be),
-                    STEERING_TITLE
-            ), pos); // writes position so the client menu can target this suspension
+        if (!level.isClientSide && player instanceof net.minecraft.server.level.ServerPlayer sp) {
+            com.createmotorsport.menu.PartMenus.openPartScreen(sp, pos);
         }
         return InteractionResult.sidedSuccess(level.isClientSide);
     }
@@ -135,12 +161,6 @@ public class SuspensionBlock extends HorizontalDirectionalBlock implements Entit
     public void onRemove(BlockState state, Level level, BlockPos pos, BlockState newState, boolean movedByPiston) {
         if (!state.is(newState.getBlock()) && level.getBlockEntity(pos) instanceof SuspensionBlockEntity suspension) {
             for (ItemStack stack : suspension.getTires()) {
-                if (!stack.isEmpty()) {
-                    Containers.dropItemStack(level, pos.getX(), pos.getY(), pos.getZ(), stack);
-                }
-            }
-            for (int slot = 0; slot < suspension.getControls().getContainerSize(); slot++) {
-                ItemStack stack = suspension.getControls().getItem(slot);
                 if (!stack.isEmpty()) {
                     Containers.dropItemStack(level, pos.getX(), pos.getY(), pos.getZ(), stack);
                 }
@@ -170,5 +190,11 @@ public class SuspensionBlock extends HorizontalDirectionalBlock implements Entit
         return blockEntityType == CreateMotorsport.SUSPENSION_BLOCK_ENTITY.get()
                 ? (tickerLevel, pos, tickerState, blockEntity) -> ((SuspensionBlockEntity) blockEntity).tick()
                 : null;
+    }
+
+    @Override
+    protected java.util.List<ItemStack> getDrops(BlockState state,
+                                                 net.minecraft.world.level.storage.loot.LootParams.Builder builder) {
+        return ConfiguredDrops.attach(super.getDrops(state, builder), builder, this, SuspensionBlockEntity.CONFIGURATION_KEYS);
     }
 }

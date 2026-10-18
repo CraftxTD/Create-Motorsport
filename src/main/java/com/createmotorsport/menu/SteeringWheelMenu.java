@@ -14,31 +14,24 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 
-
-// Menu for the steering wheel
-// Temporary, just based on my keyboard mods menus since I could copy a lot and get something working immediately
 public class SteeringWheelMenu extends AbstractContainerMenu {
     private static final int GHOST_COUNT = SteeringWheelBlockEntity.SLOT_COUNT;
 
-    public static final int WIDTH = 374;
-    public static final int ROW_Y0 = 40;
+    public static final int WIDTH = 286;
+    public static final int ROW_Y0 = 24;
     public static final int ROW_H = 19;
 
-    // two columns so people with small screens can maybe see it all by default now
     public static final int ROWS_PER_COL = (SteeringWheelBlockEntity.CONTROLS.length + 1) / 2;
     private static final int COL0_X = 8;
-    private static final int COL_STRIDE = 184;
+    private static final int COL_STRIDE = 140;
     private static final int LABEL_OFF = 4;
-    public static final int BIND_OFF = 82;
-    public static final int BIND_W = 50;
-    private static final int SLOT_A_OFF = 136;
-    private static final int SLOT_B_OFF = 158;
+    private static final int SLOT_A_OFF = 90;
+    private static final int SLOT_B_OFF = 112;
     public static final int COLUMN_W = SLOT_B_OFF + 18;
 
     public static int columnX(int ordinal) { return COL0_X + (ordinal < ROWS_PER_COL ? 0 : COL_STRIDE); }
     public static int rowY(int ordinal)    { return ROW_Y0 + (ordinal < ROWS_PER_COL ? ordinal : ordinal - ROWS_PER_COL) * ROW_H; }
     public static int labelX(int ordinal)  { return columnX(ordinal) + LABEL_OFF; }
-    public static int bindX(int ordinal)   { return columnX(ordinal) + BIND_OFF; }
     public static int slotAX(int ordinal)  { return columnX(ordinal) + SLOT_A_OFF; }
     public static int slotBX(int ordinal)  { return columnX(ordinal) + SLOT_B_OFF; }
 

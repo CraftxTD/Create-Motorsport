@@ -5,23 +5,18 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractButton;
 import net.minecraft.client.gui.narration.NarrationElementOutput;
 import net.minecraft.network.chat.Component;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.function.Consumer;
 
-public class FlatButton extends AbstractButton {
-    public static final int NEUTRAL = 0xFF3A3A3A;
-    public static final int GO = 0xFF2F6B3A;
-    public static final int STOP = 0xFF7A2F2F;
-    public static final int ACCENT = 0xFF35506A;
 
-    private static final int BORDER = 0xFF555555;
-    private static final int BORDER_HOVER = 0xFF8A8A8A;
-    private static final int LABEL = 0xFFE8E8E8;
-    private static final int LABEL_OFF = 0xFF888888;
+public class FlatButton extends AbstractButton {
 
     private final Consumer<FlatButton> onPress;
     private int color;
     private boolean muted;
+    @Nullable
+    private Component hoverTip;
 
     public FlatButton(int x, int y, int w, int h, Component label, int color,
                       Consumer<FlatButton> onPress) {
@@ -41,6 +36,17 @@ public class FlatButton extends AbstractButton {
         return this;
     }
 
+    // tooltips are nice, see HoverTip
+    public FlatButton hoverTip(@Nullable Component hoverTip) {
+        this.hoverTip = hoverTip;
+        return this;
+    }
+
+    @Nullable
+    public Component hoverTip() {
+        return hoverTip;
+    }
+
     @Override
     public void onPress() {
         onPress.accept(this);
@@ -53,25 +59,19 @@ public class FlatButton extends AbstractButton {
         int w = getWidth();
         int h = getHeight();
         boolean hot = isHoveredOrFocused() && active;
-
-        g.fill(x, y, x + w, y + h, active ? (hot ? lighten(color) : color) : 0xFF2A2A2A);
-        int border = hot ? BORDER_HOVER : BORDER;
-        g.fill(x, y, x + w, y + 1, border);
-        g.fill(x, y + h - 1, x + w, y + h, border);
-
-        Component label = getMessage();
-        var font = Minecraft.getInstance().font;
-        int tw = font.width(label);
-        g.drawString(font, label, x + (w - tw) / 2, y + (h - 8) / 2, active && !muted ? LABEL : LABEL_OFF,
-                false);
+        int label = !active ? Theme.TEXT_MUTED : muted ? Theme.TEXT_DIM : Theme.TEXT;
+        draw(g, x, y, w, h, getMessage(), active ? color : Theme.DISABLED, hot, label);
     }
 
-    // highlight on hover
-    private static int lighten(int argb) {
-        int r = Math.min(255, ((argb >> 16) & 0xFF) + 28);
-        int gr = Math.min(255, ((argb >> 8) & 0xFF) + 28);
-        int b = Math.min(255, (argb & 0xFF) + 28);
-        return (argb & 0xFF000000) | (r << 16) | (gr << 8) | b;
+    public static void draw(GuiGraphics g, int x, int y, int w, int h, Component label, int color, boolean hot,
+                            int labelColor) {
+        g.fill(x, y, x + w, y + h, hot ? Theme.hover(color) : color);
+        int edge = hot ? Theme.EDGE_HOVER : Theme.EDGE;
+        g.fill(x, y, x + w, y + 1, edge);
+        g.fill(x, y + h - 1, x + w, y + h, edge);
+
+        var font = Minecraft.getInstance().font;
+        g.drawString(font, label, x + (w - font.width(label)) / 2, y + (h - 8) / 2, labelColor, false);
     }
 
     @Override

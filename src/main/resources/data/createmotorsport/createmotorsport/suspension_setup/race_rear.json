@@ -1,0 +1,9 @@
+{
+  "natural_freq_hz": 4.6,
+  "ride_height": 0.0,
+  "track_width": 3.125,
+  "damping_ratio": 0.7,
+  "ackermann": 0.96,
+  "camber_deg": -1.5,
+  "driven": true
+}

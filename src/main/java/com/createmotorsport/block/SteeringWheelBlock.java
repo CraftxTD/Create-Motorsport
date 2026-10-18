@@ -2,13 +2,11 @@ package com.createmotorsport.block;
 
 import com.createmotorsport.CreateMotorsport;
 import com.createmotorsport.block.entity.SteeringWheelBlockEntity;
-import com.createmotorsport.menu.SteeringWheelMenu;
 import com.mojang.serialization.MapCodec;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.InteractionResult;
-import net.minecraft.world.SimpleMenuProvider;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.level.Level;
@@ -20,6 +18,7 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityTicker;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.phys.BlockHitResult;
@@ -28,7 +27,6 @@ import org.jetbrains.annotations.Nullable;
 
 public class SteeringWheelBlock extends HorizontalDirectionalBlock implements EntityBlock {
     public static final MapCodec<SteeringWheelBlock> CODEC = simpleCodec(SteeringWheelBlock::new);
-    private static final Component MENU_TITLE = Component.translatable("container.createmotorsport.steering_wheel");
 
     public static java.util.function.Consumer<BlockPos> clientDriveToggle = pos -> {
     };
@@ -69,11 +67,8 @@ public class SteeringWheelBlock extends HorizontalDirectionalBlock implements En
 
         // Right click to drive, sneak+right click to open menu
         if (player.isSecondaryUseActive()) {
-            if (!level.isClientSide) {
-                player.openMenu(new SimpleMenuProvider(
-                        (id, inv, p) -> new SteeringWheelMenu(id, inv, wheel),
-                        MENU_TITLE
-                ), pos);
+            if (!level.isClientSide && player instanceof net.minecraft.server.level.ServerPlayer sp) {
+                com.createmotorsport.menu.PartMenus.openPartScreen(sp, pos);
             }
             return InteractionResult.sidedSuccess(level.isClientSide);
         }
@@ -87,7 +82,6 @@ public class SteeringWheelBlock extends HorizontalDirectionalBlock implements En
     }
 
 
-    // block entity keeps ghost items for redstone links in NBT
     @Nullable
     @Override
     public BlockEntity newBlockEntity(BlockPos pos, BlockState state) {
@@ -100,5 +94,12 @@ public class SteeringWheelBlock extends HorizontalDirectionalBlock implements En
         return blockEntityType == CreateMotorsport.STEERING_WHEEL_BLOCK_ENTITY.get()
                 ? (tickerLevel, pos, tickerState, be) -> ((SteeringWheelBlockEntity) be).tick()
                 : null;
+    }
+
+    @Override
+    protected java.util.List<ItemStack> getDrops(BlockState state,
+                                                 net.minecraft.world.level.storage.loot.LootParams.Builder builder) {
+        return ConfiguredDrops.attach(super.getDrops(state, builder), builder, this,
+                SteeringWheelBlockEntity.CONFIGURATION_KEYS);
     }
 }

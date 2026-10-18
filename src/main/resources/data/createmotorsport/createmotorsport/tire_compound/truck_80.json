@@ -1,0 +1,17 @@
+{
+  "model": "tmeasy",
+  "longitudinal": {
+    "slip_at_peak": 0.10811,
+    "peak_ratio": 1.10870,
+    "slide_grip": 0.51330,
+    "slide_slip_factor": 6.17000,
+    "initial_stiffness": 3.06000
+  },
+  "lateral": {
+    "slip_at_peak": 0.33167,
+    "slide_grip": 0.89980,
+    "slide_slip_factor": 3.10430,
+    "initial_stiffness": 3.23530
+  },
+  "slip_at_peak_lat_load_rise": 1.00148
+}

@@ -2,7 +2,12 @@ package com.createmotorsport.block.entity;
 
 import com.createmotorsport.Config;
 import com.createmotorsport.CreateMotorsport;
-import com.createmotorsport.network.TelemetryLinePacket;
+import com.createmotorsport.race.Entrant;
+import com.createmotorsport.race.GateLine;
+import com.createmotorsport.race.Ghost;
+import com.createmotorsport.race.RaceChunks;
+import com.createmotorsport.race.RaceResults;
+import com.createmotorsport.race.RaceState;
 import com.simibubi.create.foundation.blockEntity.SmartBlockEntity;
 import com.simibubi.create.foundation.blockEntity.behaviour.BlockEntityBehaviour;
 import net.minecraft.core.BlockPos;
@@ -18,74 +23,30 @@ import net.neoforged.neoforge.network.PacketDistributor;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.UUID;
 
 
 public class LapGateBlockEntity extends SmartBlockEntity {
+
+    // ==========================================
+    // CONSTANTS
+    // ==========================================
+
     public static final int MARKER_START_FINISH = 0;
     public static final double RACE_SCAN_RADIUS = 512.0;
     private static final double GATE_HEIGHT_BAND = 6.0;
-    private static final int CROSS_DEBOUNCE_TICKS = 40; //
-
-    public enum RaceState { IDLE, COUNTDOWN, RUNNING }
-
-    // One car in the race, identified by the world pos of the steering wheels
-    public static final class Entrant {
-        public BlockPos wheelPos;
-        public String name = "";
-        public int grid = 0;
-        public int lap;
-        public int nextMarker; // which marker index we expect to cross next
-        public long lastCrossTick;
-        public long lapStartTick;
-        public long firstCrossTick = -1L;
-        public boolean finished;
-
-        public final List<float[]> recording = new ArrayList<>(); // flat x,y,z samples of the lap being driven, for the ghost
-        public final List<Long> splits = new ArrayList<>(); // game ticks since race start, one per crossing
-        public double[] lastSide = new double[0]; // sign of which side of each gate line this was was on, indexed by gate order
-        public long[] lastCrossAt = new long[0]; // game tick that each gate was last triggered, so a car sitting on the line doesnt mess things up
-
-        public Entrant(BlockPos wheelPos, String name, int grid) {
-            this.wheelPos = wheelPos;
-            this.name = name;
-            this.grid = grid;
-        }
-    }
-
-    // Gate Identity -------------------------------------------------------------------------------
-    private BlockPos partner;
-    private int marker = MARKER_START_FINISH;
-    private boolean reversed; // for direction of travel setting
-
-    // Rate State ----------------------------------------------------
-    // control marker only
-    private RaceState state = RaceState.IDLE;
-    private int countdownTicks;
-    private int totalLaps = 3;
-    private boolean logFullTelemetry;
-    private long raceStartGameTime;
-    private UUID csvRecipient;
-    private final List<Entrant> entrants = new ArrayList<>();
-    private int lastAnnouncedSecond = -1;
-
-
-    // TELEMETRY -----------------------------------------------
+    private static final int CROSS_DEBOUNCE_TICKS = 40;
     private static final int TELEMETRY_SAMPLE_TICKS = 4;
     private static final int TELEMETRY_MAX_ROWS = 40000;
-    private final List<String> telemetryRows = new ArrayList<>();
-    private String telemetryHeader;
 
-    // GHOST CAR --------------------------------------------------------------------------
-    public static final int GHOST_SAMPLE_TICKS = 2; // every 2 ticks is one sample
-    private float[] ghostSamples = new float[0];
-    private int syncedGhostSampleCount; // samples arent synced, so client-side mirror of ghostSamples.length
-    private long ghostLapTicks;
-    private long ghostLeadInTicks;
-    private String ghostName = "";
-    private boolean ghostEnabled = true;
-    public static final int GHOST_MAX_SAMPLES = 18_000; // 30 minute lap at 10 hz should be enough, bound is safer
+    // ==========================================
+    // LOADED GATES
+    // ==========================================
+
+    private static final java.util.Set<LapGateBlockEntity> LOADED =
+            java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
+
+    private static int gateSetVersion;
 
     // Proximity gate the lap gate since we have to force load it
     public static LapGateBlockEntity controllableBy(net.minecraft.world.entity.player.Player player,
@@ -103,6 +64,35 @@ public class LapGateBlockEntity extends SmartBlockEntity {
         return level.getBlockEntity(pos) instanceof LapGateBlockEntity gate ? gate : null;
     }
 
+    // ==========================================
+    // STATE
+    // ==========================================
+
+    // this post and its pair
+    private BlockPos partner;
+    private int marker = MARKER_START_FINISH;
+    private boolean reversed; // for direction of travel setting
+
+    private List<LapGateBlockEntity> cachedGates;
+    private int cachedGatesVersion = -1;
+
+    private RaceState state = RaceState.IDLE;
+    private int countdownTicks;
+    private int totalLaps = 3;
+    private boolean logFullTelemetry;
+    private long raceStartGameTime;
+    private UUID csvRecipient;
+    private final List<Entrant> entrants = new ArrayList<>();
+    private int lastAnnouncedSecond = -1;
+    private final List<String> telemetryRows = new ArrayList<>();
+    private String telemetryHeader;
+    private final Ghost ghost = new Ghost();
+    private final RaceChunks raceChunks = new RaceChunks();
+
+    // ==========================================
+    // CONSTRUCTION / LIFECYCLE
+    // ==========================================
+
     public LapGateBlockEntity(BlockPos pos, BlockState state) {
         super(CreateMotorsport.LAP_GATE_BLOCK_ENTITY.get(), pos, state);
     }
@@ -111,7 +101,39 @@ public class LapGateBlockEntity extends SmartBlockEntity {
     public void addBehaviours(List<BlockEntityBehaviour> behaviours) {
     }
 
-    // LINKING THE TWO GATES---------------------------------------------------------------------------
+    @Override
+    public void onLoad() {
+        super.onLoad();
+        if (level != null && !level.isClientSide) {
+            LOADED.add(this);
+            gateSetVersion++;
+            if (state == RaceState.IDLE && !raceChunks.isEmpty()
+                    && level instanceof net.minecraft.server.level.ServerLevel serverLevel) {
+                releaseForcedChunks(serverLevel);
+            }
+        }
+    }
+
+    @Override
+    public void remove() {
+        if (state != RaceState.IDLE) {
+            setRaceChunksForced(false);
+        }
+        LOADED.remove(this);
+        gateSetVersion++;
+        super.remove();
+    }
+
+    @Override
+    public void onChunkUnloaded() {
+        LOADED.remove(this);
+        gateSetVersion++;
+        super.onChunkUnloaded();
+    }
+
+    // ==========================================
+    // LINKING THE POSTS
+    // ==========================================
 
     public BlockPos getPartner() {
         return partner;
@@ -130,6 +152,22 @@ public class LapGateBlockEntity extends SmartBlockEntity {
         gateSetVersion++;
         setChanged();
         sendData();
+        LapGateBlockEntity other = partnerGate();
+        if (other != null && other.marker != this.marker) {
+            other.marker = this.marker;
+            other.setChanged();
+            other.sendData();
+        }
+    }
+
+    @org.jetbrains.annotations.Nullable
+    private LapGateBlockEntity partnerGate() {
+        if (partner != null && level != null
+                && level.getBlockEntity(partner) instanceof LapGateBlockEntity other
+                && this.getBlockPos().equals(other.partner)) {
+            return other;
+        }
+        return null;
     }
 
     public void linkTo(LapGateBlockEntity other) {
@@ -164,7 +202,80 @@ public class LapGateBlockEntity extends SmartBlockEntity {
         return Vec3.atCenterOf(worldPosition).add(Vec3.atCenterOf(partner)).scale(0.5);
     }
 
-    // RACE CONTROLS ------------------------------------------------------------
+    public boolean isReversed() {
+        return reversed;
+    }
+
+    public void setReversed(boolean value) {
+        reversed = value;
+        setChanged();
+        sendData();
+        LapGateBlockEntity other = partnerGate();
+        if (other != null && other.reversed != value) {
+            other.reversed = value;
+            other.setChanged();
+            other.sendData();
+        }
+    }
+
+    // ==========================================
+    // GATE ORDERING
+    // ==========================================
+
+    private List<LapGateBlockEntity> orderedGates() {
+        if (cachedGates != null && cachedGatesVersion == gateSetVersion) {
+            return cachedGates;
+        }
+        List<LapGateBlockEntity> built = buildOrderedGates();
+        cachedGates = built;
+        cachedGatesVersion = gateSetVersion;
+        return built;
+    }
+
+    private List<LapGateBlockEntity> buildOrderedGates() {
+        List<LapGateBlockEntity> gates = new ArrayList<>();
+        if (level == null) {
+            return gates;
+        }
+        gates.add(this);
+        if (level instanceof net.minecraft.server.level.ServerLevel) {
+            List<LapGateBlockEntity> others = new ArrayList<>();
+            for (LapGateBlockEntity gate : LOADED) {
+                if (gate == this || gate.isRemoved() || gate.getLevel() != level || !gate.isLinked()) {
+                    continue;
+                }
+                if (!gate.getBlockPos().closerThan(worldPosition, RACE_SCAN_RADIUS)) {
+                    continue;
+                }
+                if (gate.marker == MARKER_START_FINISH) {
+                    continue;
+                }
+                others.add(gate);
+            }
+
+            others.sort(java.util.Comparator.<LapGateBlockEntity>comparingInt(g -> g.marker)
+                    .thenComparingLong(g -> g.getBlockPos().asLong()));
+            List<LapGateBlockEntity> deduped = new ArrayList<>();
+            for (LapGateBlockEntity g : others) {
+                boolean partnerAlready = false;
+                for (LapGateBlockEntity kept : deduped) {
+                    if (kept.getBlockPos().equals(g.partner)) {
+                        partnerAlready = true;
+                        break;
+                    }
+                }
+                if (!partnerAlready) {
+                    deduped.add(g);
+                }
+            }
+            gates.addAll(deduped);
+        }
+        return gates;
+    }
+
+    // ==========================================
+    // RACE SETUP
+    // ==========================================
 
     public RaceState getState() {
         return state;
@@ -193,7 +304,6 @@ public class LapGateBlockEntity extends SmartBlockEntity {
     public List<Entrant> getEntrants() {
         return entrants;
     }
-
 
     public void scanForCars() {
         if (level == null || level.isClientSide) {
@@ -250,6 +360,10 @@ public class LapGateBlockEntity extends SmartBlockEntity {
             sendData();
         }
     }
+
+    // ==========================================
+    // START / STOP
+    // ==========================================
 
     // Start race begins countdown after delay, and syncs data
     public void startRace(ServerPlayer starter, int delaySeconds) {
@@ -338,95 +452,28 @@ public class LapGateBlockEntity extends SmartBlockEntity {
             releaseForcedChunks(serverLevel);
             return;
         }
-        forcedChunks.clear();
+        raceChunks.clear();
         for (LapGateBlockEntity gate : orderedGates()) {
-            forceChunkAt(serverLevel, gate.getBlockPos());
+            raceChunks.force(serverLevel, gate.getBlockPos());
             if (gate.partner != null) {
-                forceChunkAt(serverLevel, gate.partner);
+                raceChunks.force(serverLevel, gate.partner);
             }
         }
-        forceChunkAt(serverLevel, worldPosition);
+        raceChunks.force(serverLevel, worldPosition);
         if (partner != null) {
-            forceChunkAt(serverLevel, partner);
+            raceChunks.force(serverLevel, partner);
         }
         setChanged();
-    }
-
-    private final java.util.Set<Long> forcedChunks = new java.util.LinkedHashSet<>();
-
-    private void forceChunkAt(net.minecraft.server.level.ServerLevel serverLevel, BlockPos pos) {
-        int cx = pos.getX() >> 4;
-        int cz = pos.getZ() >> 4;
-        serverLevel.setChunkForced(cx, cz, true);
-        forcedChunks.add(net.minecraft.world.level.ChunkPos.asLong(cx, cz));
     }
 
     private void releaseForcedChunks(net.minecraft.server.level.ServerLevel serverLevel) {
-        for (long packed : new java.util.ArrayList<>(forcedChunks)) {
-            serverLevel.setChunkForced(net.minecraft.world.level.ChunkPos.getX(packed),
-                    net.minecraft.world.level.ChunkPos.getZ(packed), false);
-        }
-        forcedChunks.clear();
+        raceChunks.release(serverLevel);
         setChanged();
     }
 
-    // bumped when the set of gates or their markers could have changed, so the cache below rebuilds
-    // Static because any gate loading anywhere invalidates every other gate's view
-    private static int gateSetVersion;
-    private List<LapGateBlockEntity> cachedGates;
-    private int cachedGatesVersion = -1;
-
-
-    private List<LapGateBlockEntity> orderedGates() {
-        if (cachedGates != null && cachedGatesVersion == gateSetVersion) {
-            return cachedGates;
-        }
-        List<LapGateBlockEntity> built = buildOrderedGates();
-        cachedGates = built;
-        cachedGatesVersion = gateSetVersion;
-        return built;
-    }
-
-    private List<LapGateBlockEntity> buildOrderedGates() {
-        List<LapGateBlockEntity> gates = new ArrayList<>();
-        if (level == null) {
-            return gates;
-        }
-        gates.add(this);
-        if (level instanceof net.minecraft.server.level.ServerLevel) {
-            List<LapGateBlockEntity> others = new ArrayList<>();
-            for (LapGateBlockEntity gate : LOADED) {
-                if (gate == this || gate.isRemoved() || gate.getLevel() != level || !gate.isLinked()) {
-                    continue;
-                }
-                if (!gate.getBlockPos().closerThan(worldPosition, RACE_SCAN_RADIUS)) {
-                    continue;
-                }
-                if (gate.marker == MARKER_START_FINISH) {
-                    continue;
-                }
-                others.add(gate);
-            }
-            others.sort(java.util.Comparator.comparingInt(g -> g.marker));
-            List<LapGateBlockEntity> deduped = new ArrayList<>();
-            for (LapGateBlockEntity g : others) {
-                boolean partnerAlready = false;
-                for (LapGateBlockEntity kept : deduped) {
-                    if (kept.getBlockPos().equals(g.partner)) {
-                        partnerAlready = true;
-                        break;
-                    }
-                }
-                if (!partnerAlready) {
-                    deduped.add(g);
-                }
-            }
-            gates.addAll(deduped);
-        }
-        return gates;
-    }
-
-    // TICK ------------------------------------------------------------------------------------
+    // ==========================================
+    // RACE TICK
+    // ==========================================
 
     @Override
     public void tick() {
@@ -452,103 +499,15 @@ public class LapGateBlockEntity extends SmartBlockEntity {
             state = RaceState.RUNNING;
             raceStartGameTime = level.getGameTime();
             broadcast("§a[Race] §lGO!");
-            broadcastGhost(raceStartGameTime + ghostLeadInTicks, true);
+            broadcastGhost(raceStartGameTime + ghost.leadInTicks(), true);
             setChanged();
             sendData();
         }
     }
 
-    // GHOST ACCESSORS ------------------------------------------------------------------
-
-    public boolean isGhostEnabled() {
-        return ghostEnabled;
-    }
-
-    public void setGhostEnabled(boolean on) {
-        this.ghostEnabled = on;
-        setChanged();
-        sendData();
-    }
-
-    private int ghostSampleCount() {
-        return ghostSamples.length;
-    }
-
-    public boolean hasGhost() {
-        int count = level != null && level.isClientSide ? syncedGhostSampleCount : ghostSamples.length;
-        return count >= 6 && ghostLapTicks > 0;
-    }
-
-    public float[] getGhostSamples() {
-        return ghostSamples;
-    }
-
-    public long getGhostLapTicks() {
-        return ghostLapTicks;
-    }
-
-    public String getGhostName() {
-        return ghostName;
-    }
-
-    public boolean isReversed() {
-        return reversed;
-    }
-
-    public void setReversed(boolean value) {
-        reversed = value;
-        setChanged();
-        sendData();
-    }
-
-    public void clearGhost() {
-        ghostSamples = new float[0];
-        syncedGhostSampleCount = 0;
-        ghostLapTicks = 0;
-        ghostLeadInTicks = 0L;
-        ghostName = "";
-        setChanged();
-        sendData();
-    }
-
-    private void broadcastGhost(long startGameTime, boolean playing) {
-        if (!hasGhost() || !ghostEnabled || !(level instanceof net.minecraft.server.level.ServerLevel serverLevel)) {
-            return;
-        }
-        PacketDistributor.sendToPlayersNear(serverLevel, null,
-                worldPosition.getX() + 0.5, worldPosition.getY() + 0.5, worldPosition.getZ() + 0.5,
-                RACE_SCAN_RADIUS, new com.createmotorsport.network.GhostSyncPacket(
-                        ghostSamples, ghostLapTicks, GHOST_SAMPLE_TICKS, startGameTime, ghostName, playing));
-    }
-
-    // store the ghost if it beats the old one
-    private void considerGhost(Entrant e, long lapTicks) {
-        if (!ghostEnabled || lapTicks <= 0 || e.recording.size() < 2) {
-            return;
-        }
-        if (hasGhost() && lapTicks >= ghostLapTicks) {
-            return;
-        }
-        float[] flat = new float[e.recording.size() * 3];
-        for (int i = 0; i < e.recording.size(); i++) {
-            float[] s = e.recording.get(i);
-            flat[i * 3] = s[0];
-            flat[i * 3 + 1] = s[1];
-            flat[i * 3 + 2] = s[2];
-        }
-        ghostSamples = flat;
-        ghostLapTicks = lapTicks;
-        ghostLeadInTicks = Math.max(0L, e.firstCrossTick);
-        ghostName = e.name;
-        broadcast("§d[Race] §fBest lap by " + e.name + " §7(" + formatTime(lapTicks) + "), new ghost saved");
-        broadcastGhost(raceStartGameTime + ghostLeadInTicks, true);
-        setChanged();
-        sendData();
-    }
-
     private void tickRace() {
         long sinceStart = level.getGameTime() - raceStartGameTime;
-        boolean sampleNow = ghostEnabled && sinceStart % GHOST_SAMPLE_TICKS == 0;
+        boolean sampleNow = ghost.enabled() && sinceStart % Ghost.SAMPLE_TICKS == 0;
         boolean telemetryNow = logFullTelemetry && sinceStart % TELEMETRY_SAMPLE_TICKS == 0
                 && telemetryRows.size() < TELEMETRY_MAX_ROWS;
         List<LapGateBlockEntity> gates = orderedGates();
@@ -574,7 +533,7 @@ public class LapGateBlockEntity extends SmartBlockEntity {
                 e.lastCrossAt = resizedAt;
             }
 
-            if (sampleNow && e.recording.size() < GHOST_MAX_SAMPLES) {
+            if (sampleNow && e.recording.size() < Ghost.MAX_SAMPLES) {
                 e.recording.add(new float[]{(float) carPos.x, (float) carPos.y, (float) carPos.z});
             }
             if (telemetryNow) {
@@ -612,33 +571,8 @@ public class LapGateBlockEntity extends SmartBlockEntity {
         if (partner == null) {
             return false;
         }
-        Vec3 a = Vec3.atCenterOf(worldPosition);
-        Vec3 b = Vec3.atCenterOf(partner);
-
-        // which side of the A->B line the car is on, in the XZ plane
-        double side = (b.x - a.x) * (carPos.z - a.z) - (b.z - a.z) * (carPos.x - a.x);
-        double previous = e.lastSide[gateIndex];
-        e.lastSide[gateIndex] = side;
-        if (Double.isNaN(previous) || previous == 0.0 || Math.signum(side) == Math.signum(previous)) {
-            return false;
-        }
-        if ((previous < 0.0) == reversed) {
-            return false;
-        }
-
-        // Make sure car passed actually between the two blocks, and at gate height
-        double dx = b.x - a.x;
-        double dz = b.z - a.z;
-        double lenSq = dx * dx + dz * dz;
-        if (lenSq < 1.0e-6) {
-            return false;
-        }
-        double t = ((carPos.x - a.x) * dx + (carPos.z - a.z) * dz) / lenSq;
-        if (t < 0.0 || t > 1.0) {
-            return false;
-        }
-        double gateY = (a.y + b.y) * 0.5;
-        return Math.abs(carPos.y - gateY) <= GATE_HEIGHT_BAND;
+        return GateLine.crossed(Vec3.atCenterOf(worldPosition), Vec3.atCenterOf(partner), reversed, GATE_HEIGHT_BAND,
+                carPos, e, gateIndex);
     }
 
     private void registerCrossing(Entrant e, int gateIndex, int gateCount) {
@@ -689,7 +623,61 @@ public class LapGateBlockEntity extends SmartBlockEntity {
         return !entrants.isEmpty();
     }
 
-    // RACE OUTPUTS -------------------------------------------------------------------------------------------------------------
+    // ==========================================
+    // GHOST
+    // ==========================================
+
+    public boolean isGhostEnabled() {
+        return ghost.enabled();
+    }
+
+    public void setGhostEnabled(boolean on) {
+        ghost.setEnabled(on);
+        setChanged();
+        sendData();
+    }
+
+    public boolean hasGhost() {
+        return ghost.present(level != null && level.isClientSide);
+    }
+
+    public long getGhostLapTicks() {
+        return ghost.lapTicks();
+    }
+
+    public String getGhostName() {
+        return ghost.name();
+    }
+
+    public void clearGhost() {
+        ghost.clear();
+        setChanged();
+        sendData();
+    }
+
+    private void broadcastGhost(long startGameTime, boolean playing) {
+        if (!hasGhost() || !ghost.enabled() || !(level instanceof net.minecraft.server.level.ServerLevel serverLevel)) {
+            return;
+        }
+        PacketDistributor.sendToPlayersNear(serverLevel, null,
+                worldPosition.getX() + 0.5, worldPosition.getY() + 0.5, worldPosition.getZ() + 0.5,
+                RACE_SCAN_RADIUS, ghost.packet(startGameTime, playing));
+    }
+
+    // store the ghost if it beats the old one
+    private void considerGhost(Entrant e, long lapTicks) {
+        if (!ghost.offer(e, lapTicks)) {
+            return;
+        }
+        broadcast("§d[Race] §fBest lap by " + e.name + " §7(" + formatTime(lapTicks) + "), new ghost saved");
+        broadcastGhost(raceStartGameTime + ghost.leadInTicks(), true);
+        setChanged();
+        sendData();
+    }
+
+    // ==========================================
+    // BROADCAST RESULTS
+    // ==========================================
 
     private void broadcast(String message) {
         if (level == null || level.getServer() == null) {
@@ -698,13 +686,8 @@ public class LapGateBlockEntity extends SmartBlockEntity {
         level.getServer().getPlayerList().broadcastSystemMessage(Component.literal(message), false);
     }
 
-    public static String formatTime(long ticks) {
-        double seconds = ticks / 20.0;
-        int minutes = (int) (seconds / 60.0);
-        double rest = seconds - minutes * 60.0;
-        return minutes > 0
-                ? String.format(Locale.ROOT, "%d:%06.3f", minutes, rest)
-                : String.format(Locale.ROOT, "%.3fs", rest);
+    private static String formatTime(long ticks) {
+        return RaceResults.formatTime(ticks);
     }
 
     private void writeResultsCsv(ServerPlayer fallback) {
@@ -719,107 +702,16 @@ public class LapGateBlockEntity extends SmartBlockEntity {
         if (player == null) {
             return;
         }
-        if (entrants.isEmpty()) {
-            player.sendSystemMessage(Component.literal("§7[Race] No entrants to log"));
-            return;
-        }
-        int maxSplits = 0;
-        for (Entrant e : entrants) {
-            maxSplits = Math.max(maxSplits, e.splits.size());
-        }
-        StringBuilder header = new StringBuilder("grid,name,laps_completed,total_time_s");
-        for (int i = 0; i < maxSplits; i++) {
-            header.append(",split_").append(i + 1).append("_s");
-        }
-        PacketDistributor.sendToPlayer(player, new TelemetryLinePacket(TelemetryLinePacket.KIND_HEADER,
-                header.toString()));
-
-        List<Entrant> sorted = new ArrayList<>(entrants);
-        sorted.sort(java.util.Comparator.comparingInt((Entrant e) -> e.grid));
-        for (Entrant e : sorted) {
-            StringBuilder row = new StringBuilder();
-            row.append(e.grid).append(',').append(e.name.replace(',', ' ')).append(',')
-                    .append(e.lap).append(',')
-                    .append(String.format(Locale.ROOT, "%.3f", e.lastCrossTick / 20.0));
-            for (int i = 0; i < maxSplits; i++) {
-                row.append(',');
-                if (i < e.splits.size()) {
-                    row.append(String.format(Locale.ROOT, "%.3f", e.splits.get(i) / 20.0));
-                }
-            }
-            PacketDistributor.sendToPlayer(player, new TelemetryLinePacket(TelemetryLinePacket.KIND_ROW,
-                    row.toString()));
-        }
-
-        // Full car telemetry underneath race results, if user chooses
-        if (telemetryHeader != null && !telemetryRows.isEmpty()) {
-            PacketDistributor.sendToPlayer(player, new TelemetryLinePacket(TelemetryLinePacket.KIND_ROW, ""));
-            PacketDistributor.sendToPlayer(player,
-                    new TelemetryLinePacket(TelemetryLinePacket.KIND_ROW, telemetryHeader));
-            sendBatched(player, telemetryRows);
-        }
-        telemetryRows.clear();
-        telemetryHeader = null;
-        PacketDistributor.sendToPlayer(player, new TelemetryLinePacket(TelemetryLinePacket.KIND_END, ""));
-    }
-
-    // Send results in a few packets instead of one huge one sent over a single tick
-    private static void sendBatched(ServerPlayer player, List<String> lines) {
-        final int maxChars = 24_000;
-        StringBuilder batch = new StringBuilder(maxChars + 256);
-        for (String line : lines) {
-            if (batch.length() > 0 && batch.length() + line.length() + 1 > maxChars) {
-                PacketDistributor.sendToPlayer(player,
-                        new TelemetryLinePacket(TelemetryLinePacket.KIND_ROW, batch.toString()));
-                batch.setLength(0);
-            }
-            if (batch.length() > 0) {
-                batch.append('\n');
-            }
-            batch.append(line);
-        }
-        if (batch.length() > 0) {
-            PacketDistributor.sendToPlayer(player,
-                    new TelemetryLinePacket(TelemetryLinePacket.KIND_ROW, batch.toString()));
+        RaceResults.send(player, entrants, telemetryHeader, telemetryRows);
+        if (!entrants.isEmpty()) {
+            telemetryRows.clear();
+            telemetryHeader = null;
         }
     }
 
-    // -------------------------------------------------------------------------------
-
-    private static final java.util.Set<LapGateBlockEntity> LOADED =
-            java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
-
-    @Override
-    public void onLoad() {
-        super.onLoad();
-        if (level != null && !level.isClientSide) {
-            LOADED.add(this);
-            gateSetVersion++;
-            if (state == RaceState.IDLE && !forcedChunks.isEmpty()
-                    && level instanceof net.minecraft.server.level.ServerLevel serverLevel) {
-                releaseForcedChunks(serverLevel);
-            }
-        }
-    }
-
-    @Override
-    public void remove() {
-        if (state != RaceState.IDLE) {
-            setRaceChunksForced(false);
-        }
-        LOADED.remove(this);
-        gateSetVersion++;
-        super.remove();
-    }
-
-    @Override
-    public void onChunkUnloaded() {
-        LOADED.remove(this);
-        gateSetVersion++;
-        super.onChunkUnloaded();
-    }
-
-    // NBT -------------------------------------------------------------------------------------------------
+    // ==========================================
+    // NBT
+    // ==========================================
 
     @Override
     protected void write(CompoundTag tag, HolderLookup.Provider registries, boolean clientPacket) {
@@ -857,26 +749,12 @@ public class LapGateBlockEntity extends SmartBlockEntity {
             list.add(entry);
         }
         tag.put("Entrants", list);
-        tag.putBoolean("GhostEnabled", ghostEnabled);
-        tag.putLong("GhostLapTicks", ghostLapTicks);
-        tag.putLong("GhostLeadIn", ghostLeadInTicks);
         tag.putBoolean("Reversed", reversed);
-        tag.putString("GhostName", ghostName);
-        tag.putInt("GhostSampleCount", ghostSampleCount());
+        ghost.write(tag, clientPacket);
         if (clientPacket) {
             return;
         }
-        long[] forced = new long[forcedChunks.size()];
-        int fi = 0;
-        for (long packed : forcedChunks) {
-            forced[fi++] = packed;
-        }
-        tag.putLongArray("ForcedChunks", forced);
-        int[] bits = new int[ghostSamples.length];
-        for (int i = 0; i < ghostSamples.length; i++) {
-            bits[i] = Float.floatToIntBits(ghostSamples[i]);
-        }
-        tag.putIntArray("GhostSamples", bits);
+        raceChunks.write(tag);
     }
 
     @Override
@@ -913,28 +791,11 @@ public class LapGateBlockEntity extends SmartBlockEntity {
             }
             entrants.add(e);
         }
-        ghostEnabled = !tag.contains("GhostEnabled") || tag.getBoolean("GhostEnabled");
-        ghostLapTicks = tag.getLong("GhostLapTicks");
-        ghostLeadInTicks = tag.getLong("GhostLeadIn");
         reversed = tag.getBoolean("Reversed");
-        ghostName = tag.getString("GhostName");
-        syncedGhostSampleCount = tag.getInt("GhostSampleCount");
+        ghost.read(tag, clientPacket);
         if (clientPacket) {
             return;
         }
-        forcedChunks.clear();
-        for (long packed : tag.getLongArray("ForcedChunks")) {
-            forcedChunks.add(packed);
-        }
-        int[] bits = tag.getIntArray("GhostSamples");
-        if (bits.length > 3 * GHOST_MAX_SAMPLES) {
-            bits = new int[0];
-            ghostLapTicks = 0;
-            ghostName = "";
-        }
-        ghostSamples = new float[bits.length];
-        for (int i = 0; i < bits.length; i++) {
-            ghostSamples[i] = Float.intBitsToFloat(bits[i]);
-        }
+        raceChunks.read(tag);
     }
 }

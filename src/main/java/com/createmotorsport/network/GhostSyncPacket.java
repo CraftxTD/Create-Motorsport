@@ -1,8 +1,7 @@
 package com.createmotorsport.network;
 
 import com.createmotorsport.CreateMotorsport;
-import com.createmotorsport.block.entity.LapGateBlockEntity;
-import com.createmotorsport.client.GhostManager;
+import com.createmotorsport.client.render.GhostManager;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
@@ -17,7 +16,7 @@ public record GhostSyncPacket(float[] samples, long lapTicks, int sampleTicks, l
     public static final Type<GhostSyncPacket> TYPE =
             new Type<>(ResourceLocation.fromNamespaceAndPath(CreateMotorsport.MODID, "ghost_sync"));
 
-    private static final int MAX_SAMPLE_FLOATS = 3 * LapGateBlockEntity.GHOST_MAX_SAMPLES;
+    private static final int MAX_SAMPLE_FLOATS = 3 * com.createmotorsport.race.Ghost.MAX_SAMPLES;
 
     public static final StreamCodec<FriendlyByteBuf, GhostSyncPacket> CODEC = StreamCodec.of(
             (buf, packet) -> {

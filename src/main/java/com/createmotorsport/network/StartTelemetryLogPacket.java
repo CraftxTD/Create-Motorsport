@@ -10,14 +10,16 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
-// Client -> server; starts telemetry csv log for (seconds) at (samplesPerSec) rows per second
-public record StartTelemetryLogPacket(int seconds, int samplesPerSec) implements CustomPacketPayload {
+// Client -> server; starts telemetry csv log for (seconds) at (samplesPerSec) rows per second,
+// Its starting to get way too long so, I added 'extra' flag. Will rearrange it all more later
+public record StartTelemetryLogPacket(int seconds, int samplesPerSec, boolean extra) implements CustomPacketPayload {
     public static final Type<StartTelemetryLogPacket> TYPE =
             new Type<>(ResourceLocation.fromNamespaceAndPath(CreateMotorsport.MODID, "start_telemetry_log"));
 
     public static final StreamCodec<FriendlyByteBuf, StartTelemetryLogPacket> CODEC = StreamCodec.composite(
             ByteBufCodecs.VAR_INT, StartTelemetryLogPacket::seconds,
             ByteBufCodecs.VAR_INT, StartTelemetryLogPacket::samplesPerSec,
+            ByteBufCodecs.BOOL, StartTelemetryLogPacket::extra,
             StartTelemetryLogPacket::new);
 
     @Override
@@ -34,8 +36,12 @@ public record StartTelemetryLogPacket(int seconds, int samplesPerSec) implements
                         "§c[Motorsports] You have to be driving to start a log"), false);
                 return;
             }
+            if (packet.seconds() <= 0) {
+                wheel.stopTelemetryLog(player);
+                return;
+            }
             wheel.startTelemetryLog(player, Math.max(1, Math.min(600, packet.seconds())),
-                    Math.max(1, Math.min(20, packet.samplesPerSec())));
+                    Math.max(1, Math.min(20, packet.samplesPerSec())), packet.extra());
         });
     }
 }

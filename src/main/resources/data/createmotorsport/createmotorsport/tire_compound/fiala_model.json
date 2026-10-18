@@ -1,0 +1,9 @@
+{
+  "model": "fiala",
+  "grip": 1.8,
+  "slip_stiffness": 5000.0,
+  "cornering_stiffness": 1600.0,
+  "mu_max": 1.0,
+  "mu_min": 0.9,
+  "relax_length": 2.0
+}

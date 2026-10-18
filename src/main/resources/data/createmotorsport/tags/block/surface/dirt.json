@@ -1,0 +1,12 @@
+{
+  "replace": false,
+  "values": [
+    "#minecraft:dirt",
+    "minecraft:grass_block",
+    "minecraft:farmland",
+    "minecraft:dirt_path",
+    { "id": "minecraft:moss_block", "required": false },
+    { "id": "minecraft:pale_moss_block", "required": false },
+    { "id": "minecraft:snow_block", "required": false }
+  ]
+}

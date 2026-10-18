@@ -1,0 +1,12 @@
+{
+  "compound": "createmotorsport:motorcycle",
+  "design_mass_kg": 65,
+  "radius": 0.75,
+  "rotation": [
+    90,
+    0,
+    0
+  ],
+  "vertical_deflection": 0.04,
+  "item": "createmotorsport:small_tire"
+}

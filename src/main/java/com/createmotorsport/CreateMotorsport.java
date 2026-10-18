@@ -1,5 +1,8 @@
 package com.createmotorsport;
 
+import com.createmotorsport.registry.SpecRegistries;
+import com.createmotorsport.physics.world.Surfaces;
+import com.createmotorsport.physics.world.Gravity;
 import com.createmotorsport.block.EngineBlock;
 import com.createmotorsport.block.SteeringWheelBlock;
 import com.createmotorsport.block.SuspensionBlock;
@@ -9,16 +12,15 @@ import com.createmotorsport.block.entity.EngineBlockEntity;
 import com.createmotorsport.block.entity.LapGateBlockEntity;
 import com.createmotorsport.block.entity.SteeringWheelBlockEntity;
 import com.createmotorsport.block.entity.SuspensionBlockEntity;
-import com.createmotorsport.item.SuspensionWrenchItem;
 import com.createmotorsport.menu.EngineMenu;
 import com.createmotorsport.menu.SteeringWheelMenu;
 import com.createmotorsport.menu.SuspensionMenu;
-import com.createmotorsport.network.AdjustLiftPacket;
-import com.createmotorsport.network.SetDriveModePacket;
+import com.createmotorsport.network.SetCarAidPacket;
 import com.createmotorsport.network.SetDrivingPacket;
 import com.createmotorsport.network.SetSteeringKeyPacket;
 import com.createmotorsport.network.StartTelemetryLogPacket;
-import com.createmotorsport.network.ToggleAxleEndPacket;
+import com.createmotorsport.network.ToggleAxlePacket;
+import com.createmotorsport.network.TunePacket;
 import com.createmotorsport.network.ToggleEngineDirectionPacket;
 import com.createmotorsport.network.SteeringInputPacket;
 import com.createmotorsport.network.TelemetryLinePacket;
@@ -89,7 +91,6 @@ public class CreateMotorsport {
             BLOCK_ENTITY_TYPES.register("fuel_pump", () -> BlockEntityType.Builder.of(
                     com.createmotorsport.block.entity.FuelPumpBlockEntity::new, FUEL_PUMP.get()).build(null));
 
-    // tire's "design load", Value = midpoint_weight_kg * 9.81 / 4 wheels
     public static final DataComponentType<Float> TIRE_DESIGN_LOAD = DataComponentType.<Float>builder()
             .persistent(Codec.FLOAT)
             .networkSynchronized(ByteBufCodecs.FLOAT)
@@ -97,20 +98,66 @@ public class CreateMotorsport {
     private static final DeferredHolder<DataComponentType<?>, DataComponentType<Float>> TIRE_DESIGN_LOAD_HOLDER =
             DATA_COMPONENTS.register("tire_design_load", () -> TIRE_DESIGN_LOAD);
 
-    public static final DeferredItem<Item> RACING_COMPONENT = ITEMS.registerSimpleItem(
-            "racing_component",
-            new Item.Properties()
-    );
+    public static final DataComponentType<Float> TIRE_VERTICAL_DEFLECTION = DataComponentType.<Float>builder()
+            .persistent(Codec.FLOAT)
+            .networkSynchronized(ByteBufCodecs.FLOAT)
+            .build();
+    private static final DeferredHolder<DataComponentType<?>, DataComponentType<Float>> TIRE_VERTICAL_DEFLECTION_HOLDER =
+            DATA_COMPONENTS.register("tire_vertical_deflection", () -> TIRE_VERTICAL_DEFLECTION);
+
+    public static final DataComponentType<Float> TIRE_VERTICAL_DAMPING = DataComponentType.<Float>builder()
+            .persistent(Codec.FLOAT)
+            .networkSynchronized(ByteBufCodecs.FLOAT)
+            .build();
+    private static final DeferredHolder<DataComponentType<?>, DataComponentType<Float>> TIRE_VERTICAL_DAMPING_HOLDER =
+            DATA_COMPONENTS.register("tire_vertical_damping", () -> TIRE_VERTICAL_DAMPING);
+
+    public static final DataComponentType<Float> TIRE_MASS = DataComponentType.<Float>builder()
+            .persistent(Codec.FLOAT)
+            .networkSynchronized(ByteBufCodecs.FLOAT)
+            .build();
+    private static final DeferredHolder<DataComponentType<?>, DataComponentType<Float>> TIRE_MASS_HOLDER =
+            DATA_COMPONENTS.register("tire_mass", () -> TIRE_MASS);
+    public static final DataComponentType<Float> TIRE_WIDTH = DataComponentType.<Float>builder()
+            .persistent(Codec.FLOAT)
+            .networkSynchronized(ByteBufCodecs.FLOAT)
+            .build();
+    private static final DeferredHolder<DataComponentType<?>, DataComponentType<Float>> TIRE_WIDTH_HOLDER =
+            DATA_COMPONENTS.register("tire_width", () -> TIRE_WIDTH);
+
+    public static final DataComponentType<ResourceLocation> TIRE_COMPOUND = DataComponentType.<ResourceLocation>builder()
+            .persistent(ResourceLocation.CODEC)
+            .networkSynchronized(ResourceLocation.STREAM_CODEC)
+            .build();
+    private static final DeferredHolder<DataComponentType<?>, DataComponentType<ResourceLocation>> TIRE_COMPOUND_HOLDER =
+            DATA_COMPONENTS.register("tire_compound", () -> TIRE_COMPOUND);
+
+    public static final DataComponentType<net.minecraft.nbt.CompoundTag> TIRE_COMPOUND_OVERRIDES =
+            DataComponentType.<net.minecraft.nbt.CompoundTag>builder()
+                    .persistent(net.minecraft.nbt.CompoundTag.CODEC)
+                    .networkSynchronized(ByteBufCodecs.COMPOUND_TAG)
+                    .build();
+    private static final DeferredHolder<DataComponentType<?>, DataComponentType<net.minecraft.nbt.CompoundTag>>
+            TIRE_COMPOUND_OVERRIDES_HOLDER = DATA_COMPONENTS.register("tire_compound_overrides",
+                    () -> TIRE_COMPOUND_OVERRIDES);
+
+    public static final DataComponentType<ResourceLocation> TIRE = DataComponentType.<ResourceLocation>builder()
+            .persistent(ResourceLocation.CODEC)
+            .networkSynchronized(ResourceLocation.STREAM_CODEC)
+            .build();
+    private static final DeferredHolder<DataComponentType<?>, DataComponentType<ResourceLocation>> TIRE_HOLDER =
+            DATA_COMPONENTS.register("tire", () -> TIRE);
 
     private static final float RACING_TIRE_RADIUS = 12.0f / 16.0f;   // Motorsports racing tire
-    private static final float TRUCK_TIRE_RADIUS = 20.0f / 16.0f;    // offroad's large_tire
+    private static final float TRUCK_TIRE_RADIUS = 15.5f / 16.0f; // offroad's tire, TireLike.TIRE
+    private static final float SMALL_TIRE_RADIUS = 12.0f / 16.0f; // offroad's small_tire, TireLike.SMALL_TIRE
 
     private static final net.minecraft.world.phys.Vec3 UPRIGHT = net.minecraft.world.phys.Vec3.ZERO;
     private static final net.minecraft.world.phys.Vec3 STAND_UP = new net.minecraft.world.phys.Vec3(90.0, 0.0, 0.0);
 
     public static final DeferredItem<Item> RACING_TIRE = registerTire("racing_tire", 65, RACING_TIRE_RADIUS, UPRIGHT);
 
-    // keeping these registered for backward compatibility
+    // legacy compat
     public static final DeferredItem<Item> RACING_TIRE_1 = registerTire("racing_tire_1", 20, RACING_TIRE_RADIUS, UPRIGHT);
     public static final DeferredItem<Item> RACING_TIRE_2 = registerTire("racing_tire_2", 36, RACING_TIRE_RADIUS, UPRIGHT);
     public static final DeferredItem<Item> RACING_TIRE_3 = registerTire("racing_tire_3", 65, RACING_TIRE_RADIUS, UPRIGHT);
@@ -118,20 +165,11 @@ public class CreateMotorsport {
     public static final DeferredItem<Item> RACING_TIRE_5 = registerTire("racing_tire_5", 210, RACING_TIRE_RADIUS, UPRIGHT);
 
     // Truck tire
-    public static final DeferredItem<Item> TRUCK_TIRE = registerTire("truck_tire", 1000, TRUCK_TIRE_RADIUS, STAND_UP);
+    public static final DeferredItem<Item> TRUCK_TIRE = registerTire("truck_tire", 200, TRUCK_TIRE_RADIUS, STAND_UP);
 
-    public static final DeferredItem<Item> AIR_INTAKE = ITEMS.registerSimpleItem(
-            "air_intake",
-            new Item.Properties()
-    );
-    public static final DeferredItem<Item> EXHAUST_MANIFOLD = ITEMS.registerSimpleItem(
-            "exhaust_manifold",
-            new Item.Properties()
-    );
-    public static final DeferredItem<SuspensionWrenchItem> SUSPENSION_WRENCH = ITEMS.register(
-            "suspension_wrench",
-            () -> new SuspensionWrenchItem(new Item.Properties().stacksTo(1))
-    );
+    // offroad's small_tire art for the small passenger car and motorcycle tyres
+    public static final DeferredItem<Item> SMALL_TIRE = registerTire("small_tire", 65, SMALL_TIRE_RADIUS, STAND_UP);
+
     public static final DeferredBlock<EngineBlock> ENGINE_BLOCK = BLOCKS.register(
             "engine_block",
             () -> new EngineBlock(BlockBehaviour.Properties.of()
@@ -156,6 +194,18 @@ public class CreateMotorsport {
             "truck_engine_block",
             TRUCK_ENGINE_BLOCK
     );
+    public static final DeferredBlock<EngineBlock> PASSENGER_ENGINE_BLOCK = BLOCKS.register(
+            "passenger_engine_block",
+            () -> new EngineBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.METAL)
+                    .strength(3.5F, 6.0F)
+                    .noOcclusion()
+                    .requiresCorrectToolForDrops())
+    );
+    public static final DeferredItem<BlockItem> PASSENGER_ENGINE_BLOCK_ITEM = ITEMS.registerSimpleBlockItem(
+            "passenger_engine_block",
+            PASSENGER_ENGINE_BLOCK
+    );
     public static final DeferredBlock<SuspensionBlock> SUSPENSION = BLOCKS.register(
             "suspension",
             () -> new SuspensionBlock(BlockBehaviour.Properties.of()
@@ -168,10 +218,34 @@ public class CreateMotorsport {
             "suspension",
             () -> new com.createmotorsport.item.SuspensionBlockItem(SUSPENSION.get(), new Item.Properties())
     );
+    public static final DeferredBlock<SuspensionBlock> PASSENGER_SUSPENSION = BLOCKS.register(
+            "passenger_suspension",
+            () -> new SuspensionBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.METAL)
+                    .strength(3.5F, 6.0F)
+                    .noOcclusion()
+                    .requiresCorrectToolForDrops())
+    );
+    public static final DeferredItem<com.createmotorsport.item.SuspensionBlockItem> PASSENGER_SUSPENSION_ITEM =
+            ITEMS.register("passenger_suspension",
+                    () -> new com.createmotorsport.item.SuspensionBlockItem(
+                            PASSENGER_SUSPENSION.get(), new Item.Properties()));
+    public static final DeferredBlock<SuspensionBlock> TRUCK_SUSPENSION = BLOCKS.register(
+            "truck_suspension",
+            () -> new SuspensionBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.METAL)
+                    .strength(3.5F, 6.0F)
+                    .noOcclusion()
+                    .requiresCorrectToolForDrops())
+    );
+    public static final DeferredItem<com.createmotorsport.item.SuspensionBlockItem> TRUCK_SUSPENSION_ITEM =
+            ITEMS.register("truck_suspension",
+                    () -> new com.createmotorsport.item.SuspensionBlockItem(
+                            TRUCK_SUSPENSION.get(), new Item.Properties()));
     public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<EngineBlockEntity>> ENGINE_BLOCK_ENTITY =
             BLOCK_ENTITY_TYPES.register("engine_block", () -> BlockEntityType.Builder.of(
                     EngineBlockEntity::new,
-                    ENGINE_BLOCK.get(), TRUCK_ENGINE_BLOCK.get()
+                    ENGINE_BLOCK.get(), PASSENGER_ENGINE_BLOCK.get(), TRUCK_ENGINE_BLOCK.get()
             ).build(null));
 
     public static final DeferredHolder<DataComponentType<?>, DataComponentType<Long>> GATE_FIRST_POST =
@@ -199,7 +273,7 @@ public class CreateMotorsport {
     public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<SuspensionBlockEntity>> SUSPENSION_BLOCK_ENTITY =
             BLOCK_ENTITY_TYPES.register("suspension", () -> BlockEntityType.Builder.of(
                     SuspensionBlockEntity::new,
-                    SUSPENSION.get()
+                    SUSPENSION.get(), PASSENGER_SUSPENSION.get(), TRUCK_SUSPENSION.get()
             ).build(null));
     public static final DeferredBlock<SteeringWheelBlock> STEERING_WHEEL = BLOCKS.register(
             "steering_wheel",
@@ -238,11 +312,13 @@ public class CreateMotorsport {
 
     public static final DeferredHolder<MenuType<?>, MenuType<EngineMenu>> ENGINE_MENU = MENUS.register(
             "engine",
-            () -> IMenuTypeExtension.create((id, inv, buf) -> new EngineMenu(id, inv, buf.readBlockPos()))
+            () -> IMenuTypeExtension.create((id, inv, buf) -> new EngineMenu(id, inv, buf.readBlockPos(),
+                    buf.readBoolean()))
     );
     public static final DeferredHolder<MenuType<?>, MenuType<SuspensionMenu>> SUSPENSION_MENU = MENUS.register(
             "suspension",
-            () -> IMenuTypeExtension.create((id, inv, buf) -> new SuspensionMenu(id, inv, buf.readBlockPos()))
+            () -> IMenuTypeExtension.create((id, inv, buf) -> new SuspensionMenu(id, inv, buf.readBlockPos(),
+                    buf.readBoolean()))
     );
     public static final DeferredHolder<MenuType<?>, MenuType<SteeringWheelMenu>> STEERING_WHEEL_MENU = MENUS.register(
             "steering_wheel",
@@ -275,29 +351,42 @@ public class CreateMotorsport {
                         output.accept(com.createmotorsport.trailer.TrailerRegistry.CONTROL_PANEL.get());
                         output.accept(com.createmotorsport.trailer.TrailerRegistry.LINKER.get());
                         output.accept(ENGINE_BLOCK_ITEM.get());
+                        output.accept(PASSENGER_ENGINE_BLOCK_ITEM.get());
                         output.accept(TRUCK_ENGINE_BLOCK_ITEM.get());
                         output.accept(SUSPENSION_ITEM.get());
+                        output.accept(PASSENGER_SUSPENSION_ITEM.get());
+                        output.accept(TRUCK_SUSPENSION_ITEM.get());
                         output.accept(STEERING_WHEEL_ITEM.get());
                         output.accept(DOWN_FLAP_ITEM.get());
-                        output.accept(AIR_INTAKE.get());
-                        output.accept(EXHAUST_MANIFOLD.get());
-                        output.accept(SUSPENSION_WRENCH.get());
                         output.accept(LAP_GATE_ITEM.get());
-                        output.accept(RACING_COMPONENT.get());
-                        output.accept(RACING_TIRE.get());
-                        output.accept(TRUCK_TIRE.get());
+                        acceptTires(parameters, output);
                     })
                     .build());
+
+    private static void acceptTires(CreativeModeTab.ItemDisplayParameters parameters,
+                                    CreativeModeTab.Output output) {
+        parameters.holders().lookup(com.createmotorsport.registry.SpecRegistries.TIRE)
+                .ifPresent(lookup -> lookup.listElements()
+                        .sorted(java.util.Comparator.comparing(
+                                (net.minecraft.core.Holder.Reference<com.createmotorsport.registry.TireEntry> ref)
+                                        -> ref.key().location().toString()))
+                        .forEach(ref -> output.accept(
+                                ref.value().asStack(ref.key().location()))));
+    }
 
     public CreateMotorsport(IEventBus modEventBus, ModContainer modContainer) {
         com.createmotorsport.trailer.TrailerRegistry.init();
         modContainer.registerConfig(ModConfig.Type.SERVER, com.createmotorsport.trailer.TrailerConfig.SPEC, "createmotorsport-trailers.toml");
         modEventBus.addListener(this::commonSetup);
         modEventBus.addListener(this::registerPayloads);
+        modEventBus.addListener(com.createmotorsport.registry.SpecRegistries::register);
 
         modEventBus.addListener((net.neoforged.neoforge.capabilities.RegisterCapabilitiesEvent event) ->
                 event.registerBlockEntity(net.neoforged.neoforge.capabilities.Capabilities.FluidHandler.BLOCK,
                         FUEL_PUMP_ENTITY.get(), (pump, side) -> pump.fluidAccess));
+        // see Surfaces.checkTags
+        net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener(
+                com.createmotorsport.physics.world.Surfaces::checkTags);
         net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener(com.createmotorsport.item.FuelNozzleItem::cleanup);
         net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener(com.createmotorsport.item.FuelNozzleItem::logout);
         net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener(com.createmotorsport.trailer.TrailerTestRig::register);
@@ -316,8 +405,9 @@ public class CreateMotorsport {
 
 
         // how offroad applies the wheel mount force-- wheel impulses batched per physics substep and applied right before the step
-        SableEventPlatform.INSTANCE.onPhysicsTick((physicsSystem, timeStep) ->
-                SuspensionBlockEntity.flushBatchedForces(physicsSystem.getLevel(), timeStep));
+        SableEventPlatform.INSTANCE.onPhysicsTick((physicsSystem, timeStep) -> {
+            com.createmotorsport.vehicle.CarAssembler.endPhysicsSubstep(physicsSystem.getLevel(), timeStep);
+        });
     }
 
     private void commonSetup(FMLCommonSetupEvent event) {
@@ -330,12 +420,6 @@ public class CreateMotorsport {
         PayloadRegistrar registrar = event.registrar("1");
         registrar.playToServer(SteeringInputPacket.TYPE, SteeringInputPacket.CODEC, SteeringInputPacket::handle);
         registrar.playToServer(SetSteeringKeyPacket.TYPE, SetSteeringKeyPacket.CODEC, SetSteeringKeyPacket::handle);
-        registrar.playToServer(com.createmotorsport.network.SetEngineDesignMassPacket.TYPE,
-                com.createmotorsport.network.SetEngineDesignMassPacket.CODEC,
-                com.createmotorsport.network.SetEngineDesignMassPacket::handle);
-        registrar.playToServer(com.createmotorsport.network.SetTireDesignLoadPacket.TYPE,
-                com.createmotorsport.network.SetTireDesignLoadPacket.CODEC,
-                com.createmotorsport.network.SetTireDesignLoadPacket::handle);
         registrar.playToServer(com.createmotorsport.network.RaceControlPacket.TYPE,
                 com.createmotorsport.network.RaceControlPacket.CODEC,
                 com.createmotorsport.network.RaceControlPacket::handle);
@@ -347,9 +431,27 @@ public class CreateMotorsport {
                 com.createmotorsport.network.GhostSyncPacket::handle);
         registrar.playToServer(SetDrivingPacket.TYPE, SetDrivingPacket.CODEC, SetDrivingPacket::handle);
         registrar.playToServer(StartTelemetryLogPacket.TYPE, StartTelemetryLogPacket.CODEC, StartTelemetryLogPacket::handle);
-        registrar.playToServer(SetDriveModePacket.TYPE, SetDriveModePacket.CODEC, SetDriveModePacket::handle);
-        registrar.playToServer(ToggleAxleEndPacket.TYPE, ToggleAxleEndPacket.CODEC, ToggleAxleEndPacket::handle);
-        registrar.playToServer(AdjustLiftPacket.TYPE, AdjustLiftPacket.CODEC, AdjustLiftPacket::handle);
+        registrar.playToServer(SetCarAidPacket.TYPE, SetCarAidPacket.CODEC, SetCarAidPacket::handle);
+        registrar.playToClient(com.createmotorsport.network.OpenPartScreenPacket.TYPE,
+                com.createmotorsport.network.OpenPartScreenPacket.CODEC,
+                com.createmotorsport.network.OpenPartScreenPacket::handle);
+        registrar.playToServer(com.createmotorsport.network.PartStatusRequestPacket.TYPE,
+                com.createmotorsport.network.PartStatusRequestPacket.CODEC,
+                com.createmotorsport.network.PartStatusRequestPacket::handle);
+        registrar.playToClient(com.createmotorsport.network.PartStatusPacket.TYPE,
+                com.createmotorsport.network.PartStatusPacket.CODEC,
+                com.createmotorsport.network.PartStatusPacket::handle);
+        registrar.playToServer(com.createmotorsport.network.OpenWirelessPacket.TYPE,
+                com.createmotorsport.network.OpenWirelessPacket.CODEC,
+                com.createmotorsport.network.OpenWirelessPacket::handle);
+        registrar.playToServer(ToggleAxlePacket.TYPE, ToggleAxlePacket.CODEC, ToggleAxlePacket::handle);
+        registrar.playToServer(TunePacket.TYPE, TunePacket.CODEC, TunePacket::handle);
+        registrar.playToServer(com.createmotorsport.network.TuneHeldPacket.TYPE,
+                com.createmotorsport.network.TuneHeldPacket.CODEC,
+                com.createmotorsport.network.TuneHeldPacket::handle);
+        registrar.playToClient(com.createmotorsport.network.OpenTuneHeldPacket.TYPE,
+                com.createmotorsport.network.OpenTuneHeldPacket.CODEC,
+                com.createmotorsport.network.OpenTuneHeldPacket::handle);
         registrar.playToServer(ToggleEngineDirectionPacket.TYPE, ToggleEngineDirectionPacket.CODEC,
                 ToggleEngineDirectionPacket::handle);
         registrar.playToClient(TelemetryLinePacket.TYPE, TelemetryLinePacket.CODEC, TelemetryLinePacket::handle);
@@ -361,12 +463,22 @@ public class CreateMotorsport {
 
     private static DeferredItem<Item> registerTire(String name, double midpointKg, float radius,
                                                    net.minecraft.world.phys.Vec3 rotation) {
-        float designLoad = (float) (midpointKg * 9.81 / 4.0);
+        return registerTire(name, midpointKg, radius, rotation, null);
+    }
+
+    private static DeferredItem<Item> registerTire(String name, double midpointKg, float radius,
+                                                   net.minecraft.world.phys.Vec3 rotation,
+                                                   @org.jetbrains.annotations.Nullable ResourceLocation model) {
+        float designLoad = (float) (midpointKg * com.createmotorsport.physics.world.Gravity.DEFAULT / 4.0);
         return ITEMS.register(name, () -> new com.createmotorsport.item.TireItem(new Item.Properties()
                 .stacksTo(16)
                 .component(OffroadDataComponents.TIRE, new TireLike(radius,
-                        rotation, net.minecraft.world.phys.Vec3.ZERO, (ResourceLocation) null))
-                .component(TIRE_DESIGN_LOAD, designLoad)));
+                        rotation, net.minecraft.world.phys.Vec3.ZERO, model))
+                .component(TIRE_DESIGN_LOAD, designLoad)
+                .component(TIRE_VERTICAL_DEFLECTION,
+                        com.createmotorsport.registry.TireEntry.DEFAULT_VERTICAL_DEFLECTION)
+                .component(TIRE_VERTICAL_DAMPING,
+                        com.createmotorsport.registry.TireEntry.DEFAULT_VERTICAL_DAMPING)));
     }
 
     private static DeferredHolder<SoundEvent, SoundEvent> registerSound(String name) {

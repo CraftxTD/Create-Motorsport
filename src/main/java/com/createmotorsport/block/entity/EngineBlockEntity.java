@@ -1,25 +1,35 @@
 package com.createmotorsport.block.entity;
 
+import com.createmotorsport.physics.control.IgnitionSwitch;
 import com.createmotorsport.Config;
+import com.createmotorsport.physics.spec.TorqueSplitSpec;
+import com.createmotorsport.redstone.LinkReceivers;
+import com.createmotorsport.tune.SpecSlot;
+import com.createmotorsport.tune.Tunable;
+import com.createmotorsport.vehicle.AssembledCar;
+import com.createmotorsport.vehicle.CarAssembler;
+import com.createmotorsport.physics.spec.TractionControlSpec;
 import com.createmotorsport.CreateMotorsport;
 import com.createmotorsport.block.EngineBlock;
-import com.createmotorsport.physics.DrivetrainSim;
-import com.createmotorsport.physics.EngineSpec;
-import com.simibubi.create.Create;
-import com.simibubi.create.content.redstone.link.IRedstoneLinkable;
-import com.simibubi.create.content.redstone.link.RedstoneLinkNetworkHandler;
+import com.createmotorsport.physics.drivetrain.DrivetrainSim;
+import com.createmotorsport.physics.spec.GearboxSpec;
+import com.createmotorsport.registry.SpecCodecs;
+import com.createmotorsport.physics.control.PowerMode;
+import com.createmotorsport.registry.SpecOverrides;
+import com.createmotorsport.registry.SpecRegistries;
+import com.createmotorsport.registry.EngineKind;
+import com.createmotorsport.fuel.FuelDraw;
+import com.createmotorsport.physics.spec.EngineSpec;
 import com.simibubi.create.foundation.blockEntity.SmartBlockEntity;
 import com.simibubi.create.foundation.blockEntity.behaviour.BlockEntityBehaviour;
-import dev.ryanhcode.sable.Sable;
 import dev.ryanhcode.sable.api.block.BlockEntitySubLevelActor;
-import dev.ryanhcode.sable.sublevel.SubLevel;
-import net.createmod.catnip.data.Couple;
-import org.joml.Vector3d;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.network.chat.Component;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.core.NonNullList;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
@@ -27,23 +37,57 @@ import net.minecraft.world.ContainerHelper;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.phys.Vec3;
-import net.neoforged.neoforge.fluids.FluidStack;
-import net.neoforged.neoforge.fluids.FluidUtil;
-import net.neoforged.neoforge.fluids.capability.IFluidHandler;
 
-import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Engine and (for now) the gearbox, run by DrivetrainSim
+ * The car calls beginStep and gameStep each tick, coupling and settle each substep
+ * An engine runs them itself if no Steering Wheel is attached, markKeyed()
+ *
+ * HAS TO BE A SABLE ACTOR SO THAT AssembledCar.rebuild FINDS IT
+ * see vehicle/AssembledCar for a checklist when adding new kinds of Block Entities for a car
+ */
+public class EngineBlockEntity extends SmartBlockEntity implements com.createmotorsport.menu.PartPanel, dev.ryanhcode.sable.api.block.BlockEntitySubLevelActor,
+        Tunable {
 
-public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode.sable.api.block.BlockEntitySubLevelActor {
+    // ==========================================
+    // CONSTANTS / TYPES
+    // ==========================================
 
-    //control channels for steering wheel
+    // see ConfiguredDrops
+    public static final java.util.Set<String> CONFIGURATION_KEYS = java.util.Set.of(
+            "Engine", "Gearbox", "EngineOverrides", "GearboxOverrides", "RotationDirection",
+            "PowerMode", "Items");
+
+    // sound and fuel
+    private static final int FUEL_PER_BURN = 100;
+    private static final int BURN_TICKS = 100;
+    private static final int SOUND_INTERVAL = 8;
+
+    // redstone link channels
+    public static final ControlChannel[] CHANNELS = ControlChannel.values();
+    public static final int SLOT_CHANNELS_START = 0;
+    public static final int SLOT_COUNT = SLOT_CHANNELS_START + CHANNELS.length * 2;
+
+    // legacy compat
+    private static final int LEGACY_CHANNELS_START = 2;
+
+    public static int channelSlotA(ControlChannel channel) {
+        return SLOT_CHANNELS_START + channel.ordinal() * 2;
+    }
+
+    public static int channelSlotB(ControlChannel channel) {
+        return SLOT_CHANNELS_START + channel.ordinal() * 2 + 1;
+    }
+
+    // redstone link channels
     public enum ControlChannel {
         THROTTLE("Throttle"),
         CLUTCH("Clutch"),
         SHIFT_UP("Shift Up"),
-        SHIFT_DOWN("Shift Down");
+        SHIFT_DOWN("Shift Down"),
+        IGNITION("Ignition");
 
         private final String displayName;
 
@@ -56,91 +100,40 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
         }
     }
 
-    public static final ControlChannel[] CHANNELS = ControlChannel.values();
-    public static final int SLOT_EXHAUST = 0;
-    public static final int SLOT_INTAKE = 1;
-    public static final int SLOT_CHANNELS_START = 2;
-    public static final int SLOT_COUNT = SLOT_CHANNELS_START + CHANNELS.length * 2;
+    // ==========================================
+    // STATE
+    // ==========================================
 
-    public static int channelSlotA(ControlChannel channel) {
-        return SLOT_CHANNELS_START + channel.ordinal() * 2;
-    }
+    private final EngineKind kind;
+    private final SpecSlot<EngineSpec> engineSlot;
+    private final SpecSlot<GearboxSpec> gearboxSlot;
+    private EngineSpec baseSpec;
 
-    public static int channelSlotB(ControlChannel channel) {
-        return SLOT_CHANNELS_START + channel.ordinal() * 2 + 1;
-    }
-
-    private static final int FUEL_PER_BURN = 100;
-    private static final int BURN_TICKS = 100;
-    private static final int SOUND_INTERVAL = 8;
-
+    // ENGINE
     private final DrivetrainSim drivetrain;
-    private final EngineSpec baseSpec;
-    private double designMassOverride;
-    private int burnTicks;
-    private int soundCooldown;
+    private double torqueScale; // design mass, trim and power mode, set each game tick
+    private int rotationDirection = 1; // User selected engine crank rotation direction (+1 or -1)
     private float throttle;
-    private int lastShiftUpSignal;
-    private int lastShiftDownSignal;
+    private int burnTicks;
 
-    private final int[] receivedSignals = new int[CHANNELS.length];
-    private final boolean[] registeredLinks = new boolean[CHANNELS.length];
-    private final IRedstoneLinkable[] channelLinks = new IRedstoneLinkable[CHANNELS.length];
+    private final IgnitionSwitch ignition = new IgnitionSwitch();
+    private final PowerMode power = new PowerMode(); // engine power mode and overtake boost
 
-
-    // signal from our steering wheel that takes precedence over redstone
+    // DRIVER CONTROLS from steering wheel
     private final int[] driverSignals = new int[CHANNELS.length];
     private float driverThrottle01;
-    private SteeringWheelBlockEntity.DriveMode driveMode = SteeringWheelBlockEntity.DriveMode.RWD;
     private long driverSignalTime = Long.MIN_VALUE;
-
-    // values for csv logging
-    private double telemAvgWheelOmega;
-    private double telemWheelTorqueTotal;
-    private int telemDrivenWheels;
-
-    // User selected engine crank rotation direction (+1 or -1)
-    private int rotationDirection = 1;
-
-    // Center-differential coupling gain
-    // Nm of torque transfer per rad/s of front vs rear speed difference
-    private static final double CENTER_DIFF_COUPLING = 50.0;
-
-    // Driver controlled settings: engine mode, overtake and traction control affecting torque
-    public static final int MAX_POWER_MODE = 8;
-    private static final double BOOST_FACTOR = 1.25;   // overtake torque multiplier
-    private static final double BOOST_DRAIN = 1.0 / (20 * 8);    // ~8 s of full boost
-    private static final double BOOST_RECHARGE = 1.0 / (20 * 20); // ~20 s to refill
-
-    // Traction Control
-    private static final double TC_SPEED_FLOOR = 2.0;    // divide by zero otherwise
-    private static final double TC_INTEGRAL_CLAMP = 0.5;
-    private static final double TICK_SECONDS = 0.05;
-    private static final double TCL_SIDE_SLIP = 4.0;     // m/s of sideways slide before the anti-oversteer cut
-    private static final double TCL_SIDE_RANGE = 8.0;    // m/s past that over which the cut ramps to the floor
-    private static final double TCL_SIDE_FLOOR = 0.5;    // most the lateral cut can trim throttle to
-    private static final double TC_RELEASE_GAIN = 4.0; // multiplies tcRecoverRate at full slip headroom
-
-    private int powerMode = MAX_POWER_MODE; // 1 to 8;  torque caps at mode / MAX
-    private boolean tractionControl;
-    private double telemTcSlipTarget;
-    private double telemTcSlipRatio;
-    private double telemTcFactor = 1.0;
-    private double telemTcCapacity = 1.0;
-    private double tcIntegral;
-    private double tcFactor = 1.0; // last throttle multiplier
-    private double boostReserve = 1.0;      // 0 to 1
-    private boolean boosting;
-
+    private boolean driverIgnition;
+    private long keyedTime = Long.MIN_VALUE;
     private boolean auxOvertake;
     private boolean auxModeUp;
     private boolean auxModeDown;
-    private boolean auxTc;
     private boolean lastAuxModeUp;
     private boolean lastAuxModeDown;
-    private boolean lastAuxTc;
-    private double telemPowerFactor = 1.0;
+    private int lastShiftUpSignal;
+    private int lastShiftDownSignal;
 
+    // redstone link items
     private final NonNullList<ItemStack> items = NonNullList.withSize(SLOT_COUNT, ItemStack.EMPTY);
     private final SimpleContainer inventory = new SimpleContainer(SLOT_COUNT) {
         @Override
@@ -150,17 +143,33 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
             EngineBlockEntity.this.setChanged();
         }
     };
+    private final LinkReceivers links = new LinkReceivers(this, inventory, CHANNELS.length,
+            i -> channelSlotA(CHANNELS[i]), i -> channelSlotB(CHANNELS[i]));
+
+    // logging and sound
+    private double telemAvgWheelOmega;
+    private int telemDrivenWheels;
+    private int soundCooldown;
+
+    // ==========================================
+    // CONSTRUCTION / LIFECYCLE
+    // ==========================================
 
     public EngineBlockEntity(BlockPos pos, BlockState state) {
         super(CreateMotorsport.ENGINE_BLOCK_ENTITY.get(), pos, state);
-        this.baseSpec = state.is(CreateMotorsport.TRUCK_ENGINE_BLOCK.get())
-                ? EngineSpec.TRUCK_DIESEL : EngineSpec.RACING_V8_HYBRID;
-        this.drivetrain = new DrivetrainSim(baseSpec);
+        this.kind = EngineKind.of(state);
+        this.engineSlot = new SpecSlot<>("engine", "Engine", SpecRegistries.ENGINE, SpecCodecs.ENGINE_SPEC,
+                SpecRegistries.BUILT_IN_ENGINES,
+                (access, key) -> SpecRegistries.fittedEngine(access, key, EngineKind.engineFallback(key, this.kind)),
+                "Engine", this.kind.engine());
+        this.gearboxSlot = new SpecSlot<>("gearbox", "Gearbox", SpecRegistries.GEARBOX, SpecCodecs.GEARBOX_SPEC,
+                SpecRegistries.BUILT_IN_GEARBOXES,
+                (access, key) -> SpecRegistries.fittedGearbox(access, key, EngineKind.gearboxFallback(key, this.kind)),
+                "Gearbox", this.kind.gearbox());
+        this.baseSpec = EngineKind.engineFallback(this.engineSlot.id(), this.kind);
+        this.drivetrain = new DrivetrainSim(baseSpec, EngineKind.gearboxFallback(this.gearboxSlot.id(), this.kind));
         for (int slot = 0; slot < SLOT_COUNT; slot++) {
             inventory.setItem(slot, items.get(slot));
-        }
-        for (ControlChannel channel : CHANNELS) {
-            channelLinks[channel.ordinal()] = new ChannelLink(channel);
         }
     }
 
@@ -169,16 +178,178 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
     }
 
     @Override
+    public void initialize() {
+        super.initialize();
+        refreshLinkNetwork();
+        CarAssembler.memberChanged(level);
+    }
+
+    @Override
+    public void remove() {
+        removeLinks();
+        CarAssembler.memberChanged(level);
+        super.remove();
+    }
+
+    @Override
+    public void onChunkUnloaded() {
+        removeLinks();
+        CarAssembler.memberChanged(level);
+        super.onChunkUnloaded();
+    }
+
+    // ==========================================
+    // PART SCREEN / SETUP
+    // ==========================================
+
+    @Override
+    public com.createmotorsport.menu.PartKind partKind() {
+        return com.createmotorsport.menu.PartKind.ENGINE;
+    }
+
+    @Override
+    public List<Component> statusLines() {
+        String state = drivetrain.firing() ? "Running" : ignition.on() ? "Stopped, ignition on" : "Switched off";
+        return List.of(
+                Component.literal("Engine: " + engineSlot.id().location().getPath()),
+                Component.literal("Gearbox: " + gearboxSlot.id().location().getPath()),
+                Component.literal(state + ", " + getDisplayRpm() + " rpm, gear " + drivetrain.gearDisplay()),
+                Component.literal("Fuel in reach: " + FuelDraw.inReach(level, worldPosition) + " mB"),
+                Component.literal("Power mode " + power.mode()));
+    }
+
+    public int getRotationDirection() {
+        return rotationDirection;
+    }
+
+    public void toggleRotationDirection() {
+        if (level == null || level.isClientSide) {
+            return;
+        }
+        rotationDirection = -rotationDirection;
+        setChanged();
+        sendData();
+    }
+
+    // gearbox here for now
+    public ResourceKey<GearboxSpec> getGearboxId() {
+        return gearboxSlot.id();
+    }
+
+    public ResourceKey<EngineSpec> getEngineId() {
+        return engineSlot.id();
+    }
+
+    // beginStep refreshes spec
+    public ResourceKey<EngineSpec> cycleEngine() {
+        return cycleEngine(1);
+    }
+
+    public ResourceKey<EngineSpec> cycleEngine(int step) {
+        engineSlot.cycle(levelRegistryAccess(), step);
+        notifyUpdate();
+        return engineSlot.id();
+    }
+
+    public ResourceKey<GearboxSpec> cycleGearbox() {
+        return cycleGearbox(1);
+    }
+
+    public ResourceKey<GearboxSpec> cycleGearbox(int step) {
+        gearboxSlot.cycle(levelRegistryAccess(), step);
+        notifyUpdate();
+        return gearboxSlot.id();
+    }
+
+    public EngineSpec packEngine() {
+        return engineSlot.pack(levelRegistryAccess());
+    }
+
+    public GearboxSpec packGearbox() {
+        return gearboxSlot.pack(levelRegistryAccess());
+    }
+
+    public CompoundTag getEngineOverrides() {
+        return engineSlot.overrides();
+    }
+
+    public CompoundTag getGearboxOverrides() {
+        return gearboxSlot.overrides();
+    }
+
+    @org.jetbrains.annotations.Nullable
+    public String setEngineOverride(String path, String value) {
+        return tuneSection("engine").set(path, value);
+    }
+
+    public void clearEngineOverride(String path) {
+        tuneSection("engine").clear(path);
+    }
+
+    @org.jetbrains.annotations.Nullable
+    public String setGearboxOverride(String path, String value) {
+        return tuneSection("gearbox").set(path, value);
+    }
+
+    public void clearGearboxOverride(String path) {
+        tuneSection("gearbox").clear(path);
+    }
+
+    private void overridesChanged() {
+        setChanged();
+        sendData();
+    }
+
+    @Override
+    public List<Tunable.Section<?>> tuneSections() {
+        return List.of(
+                engineSlot.section(levelRegistryAccess(), this::overridesChanged, this::cycleEngine),
+                gearboxSlot.section(levelRegistryAccess(), this::overridesChanged, this::cycleGearbox));
+    }
+
+    @org.jetbrains.annotations.Nullable
+    private net.minecraft.core.RegistryAccess levelRegistryAccess() {
+        return level == null ? null : level.registryAccess();
+    }
+
+    // ==========================================
+    // GAME TICK / PHYSICS SUBSTEP
+    // ==========================================
+
+    @Override
     public void tick() {
         super.tick();
         if (level == null || level.isClientSide) {
             return;
         }
+        AssembledCar car = CarAssembler.of(this);
+        if (car != null && car.steps(this)) {
+            car.gameTick(level);
+            return;
+        }
+        beginStep();
+        gameStep(0.0, 0);
+        coupling(0.0, 1.0 / 20.0, 0.0);
+        settle(0.0);
+    }
+
+    // To check for changes before synthesizing driveline, /reload can change things
+    public void beginStep() {
+        GearboxSpec fittedGearbox = gearboxSlot.fitted(levelRegistryAccess());
+        if (fittedGearbox != drivetrain.gearbox()) {
+            drivetrain.setGearbox(fittedGearbox);
+        }
+        EngineSpec fittedEngine = engineSlot.fitted(levelRegistryAccess());
+        if (fittedEngine != baseSpec) {
+            baseSpec = fittedEngine;
+            drivetrain.setSpec(baseSpec);
+        }
 
         updateFuel();
         updateThrottle();
+    }
 
-        boolean running = isFueled();
+    public void gameStep(double wheelOmega, int wheels) {
         boolean clutchHeld = signalFor(ControlChannel.CLUTCH) > 0;
         int shiftUpSignal = signalFor(ControlChannel.SHIFT_UP);
         int shiftDownSignal = signalFor(ControlChannel.SHIFT_DOWN);
@@ -190,113 +361,22 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
         boolean driving = driverActive();
         boolean modeUp = driving && auxModeUp;
         boolean modeDown = driving && auxModeDown;
-        boolean tcToggle = driving && auxTc;
         if (modeUp && !lastAuxModeUp) {
-            powerMode = Math.min(MAX_POWER_MODE, powerMode + 1);
+            power.up();
         }
         if (modeDown && !lastAuxModeDown) {
-            powerMode = Math.max(1, powerMode - 1);
-        }
-        if (tcToggle && !lastAuxTc) {
-            tractionControl = !tractionControl;
+            power.down();
         }
         lastAuxModeUp = modeUp;
         lastAuxModeDown = modeDown;
-        lastAuxTc = tcToggle;
 
-        // uses sables per-plot actor registry to gather every suspension with ties on it, to make up the drivetrain
-        SubLevel subLevel = Sable.HELPER.getContaining(this);
-        List<SuspensionBlockEntity> axles = new ArrayList<>();
-        int wheelCount = 0;
-        int actorCount = 0;
-        double omegaSum = 0.0;
-        double peakOmega = 0.0;
-        double peakLatUse = 0.0;
-        double tractionForce = 0.0;
-        double repRadius = 0.0;
-        Direction engineFacing = getBlockState().getValue(EngineBlock.FACING);
-
-        if (subLevel != null) {
-            for (BlockEntitySubLevelActor actor : subLevel.getPlot().getBlockEntityActors()) {
-                actorCount++;
-                if (!(actor instanceof SuspensionBlockEntity suspension)
-                        || suspension.isRemoved() || !suspension.hasAnyTire()) {
-                    continue;
-                }
-                if (!isDrivenAxle(suspension)) {
-                    continue;
-                }
-                axles.add(suspension);
-                if (repRadius <= 0.0) {
-                    repRadius = suspension.getTireRadius();
-                }
-                int sign = rotationDirection * facingSign(engineFacing, suspension.getFacing());
-                int tireCount = (suspension.hasTire(SuspensionBlockEntity.WheelSide.LEFT) ? 1 : 0)
-                        + (suspension.hasTire(SuspensionBlockEntity.WheelSide.RIGHT) ? 1 : 0);
-                omegaSum += suspension.averageDrivenOmega(sign) * tireCount;
-                peakOmega = Math.max(peakOmega, suspension.peakDrivenOmega(sign));
-                peakLatUse = Math.max(peakLatUse, suspension.peakLateralUse());
-                tractionForce += suspension.remainingTractionForce();
-                wheelCount += tireCount;
-            }
-        }
-
-        double avgOmega = wheelCount == 0 ? 0.0 : omegaSum / wheelCount;
-        boolean semiAuto = Config.SEMI_AUTO_SHIFT.get();
-        double totalTorque = drivetrain.update(running, throttle, clutchHeld, semiAuto, shiftUpEdge, shiftDownEdge,
-                avgOmega, 1.0 / 20.0);
-        totalTorque *= drivetrain.spec().drivetrainTorqueScale() * Config.DRIVETRAIN_TRIM.getAsDouble();
-        totalTorque *= powerFactor(driving && auxOvertake, peakOmega, peakLatUse, repRadius, running,
-                tractionForce, Math.abs(totalTorque));
-
-        this.telemAvgWheelOmega = avgOmega;
-        this.telemWheelTorqueTotal = totalTorque;
-        this.telemDrivenWheels = wheelCount;
-
-        if (wheelCount > 0) {
-            long gameTime = level.getGameTime();
-
-            double frontOmegaSum = 0.0;
-            double rearOmegaSum = 0.0;
-            int frontWheels = 0;
-            int rearWheels = 0;
-            for (SuspensionBlockEntity suspension : axles) {
-                int sign = rotationDirection * facingSign(engineFacing, suspension.getFacing());
-                int tc = (suspension.hasTire(SuspensionBlockEntity.WheelSide.LEFT) ? 1 : 0)
-                        + (suspension.hasTire(SuspensionBlockEntity.WheelSide.RIGHT) ? 1 : 0);
-                if (suspension.isFrontAxle()) {
-                    frontOmegaSum += suspension.averageDrivenOmega(sign) * tc;
-                    frontWheels += tc;
-                } else {
-                    rearOmegaSum += suspension.averageDrivenOmega(sign) * tc;
-                    rearWheels += tc;
-                }
-            }
-
-            double perWheelFront;
-            double perWheelRear;
-            if (frontWheels > 0 && rearWheels > 0) {
-                double bias = Config.CENTER_DIFF_FRONT_BIAS.getAsDouble();
-                double frontAvg = frontOmegaSum / frontWheels;
-                double rearAvg = rearOmegaSum / rearWheels;
-                double cap = Config.CENTER_DIFF_LOCK.getAsDouble() * Math.abs(totalTorque);
-                double transfer = Mth.clamp((frontAvg - rearAvg) * CENTER_DIFF_COUPLING, -cap, cap);
-                double frontTorque = totalTorque * bias - transfer;
-                double rearTorque = totalTorque * (1.0 - bias) + transfer;
-                perWheelFront = frontTorque / frontWheels;
-                perWheelRear = rearTorque / rearWheels;
-            } else {
-                double perWheel = totalTorque / wheelCount;
-                perWheelFront = perWheel;
-                perWheelRear = perWheel;
-            }
-
-            for (SuspensionBlockEntity suspension : axles) {
-                int sign = rotationDirection * facingSign(engineFacing, suspension.getFacing());
-                double perWheel = suspension.isFrontAxle() ? perWheelFront : perWheelRear;
-                suspension.applyDriveTorque(perWheel * sign, gameTime);
-            }
-        }
+        boolean starter = ignition.step(driving && driverIgnition, keyed(), hasLink(ControlChannel.IGNITION),
+                links.signal(ControlChannel.IGNITION.ordinal()) > 0, drivetrain.firing());
+        drivetrain.settle(wheelOmega);
+        drivetrain.tick(ignition.on(), isFueled(), starter, throttle, clutchHeld, shiftUpEdge, shiftDownEdge,
+                wheelOmega, 1.0 / 20.0);
+        this.torqueScale = drivetrain.torqueScale(power.step(driving && auxOvertake));
+        this.telemDrivenWheels = wheels;
 
         if (Config.ENABLE_DEBUG_LOGGING.getAsBoolean() && level.getGameTime() % 20 == 0) {
             CreateMotorsport.LOGGER.info(
@@ -304,74 +384,45 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
                     worldPosition, driverActive(), drivetrain.gearDisplay(),
                     getDisplayRpm(), String.format("%.2f", throttle),
                     signalFor(ControlChannel.CLUTCH), signalFor(ControlChannel.SHIFT_UP),
-                    signalFor(ControlChannel.SHIFT_DOWN), wheelCount,
-                    String.format("%.1f", totalTorque));
+                    signalFor(ControlChannel.SHIFT_DOWN), wheels,
+                    String.format("%.1f", getWheelTorqueTotal()));
         }
         // muting engine for now
-        // playEngineSound(running);
+        // playEngineSound(drivetrain.firing());
     }
 
-    public double getDesignMass() {
-        return designMassOverride > 0.0 ? designMassOverride : baseSpec.designVehicleMassBlocks();
+    // torque, stiffness, slip limit, at the wheels. For the driveline
+    public DrivetrainSim.Coupling coupling(double wheelOmega, double dt, double dragThrottle) {
+        DrivetrainSim.Coupling c = drivetrain.couple(wheelOmega, dt, dragThrottle);
+        this.telemAvgWheelOmega = wheelOmega;
+        return new DrivetrainSim.Coupling(c.torque() * torqueScale, c.stiffness() * torqueScale,
+                c.limit() * torqueScale);
     }
 
-    public void setDesignMassOverride(double blocks) {
-        double clamped = blocks <= 0.0 ? 0.0 : Mth.clamp(blocks, 1.0, 100000.0);
-        if (clamped == designMassOverride) {
-            return;
-        }
-        designMassOverride = clamped;
-        applyDesignMass();
-        setChanged();
-        sendData();
+    public void settle(double wheelOmega) {
+        drivetrain.settle(wheelOmega);
     }
 
-    private void applyDesignMass() {
-        drivetrain.setSpec(designMassOverride > 0.0
-                ? baseSpec.withDesignVehicleMass(designMassOverride) : baseSpec);
-    }
-
-    public int getRotationDirection() {
-        return rotationDirection;
-    }
-
-    // +1 or -1 from user selection
-    public void toggleRotationDirection() {
-        if (level == null || level.isClientSide) {
-            return;
-        }
-        rotationDirection = -rotationDirection;
-        setChanged();
-        sendData();
-    }
-
-    // trying to auto-align the car, so +1 is the suspension facing same way as engine, -1 if opposite
-    private static int facingSign(Direction engineFacing, Direction suspensionFacing) {
-        int dot = engineFacing.getStepX() * suspensionFacing.getStepX()
-                + engineFacing.getStepZ() * suspensionFacing.getStepZ();
-        return dot < 0 ? -1 : 1;
-    }
-
-    // ===================================================
-    // Fuel & throttle
-    // =================
+    // ==========================================
+    // FUEL / THROTTLE
+    // ==========================================
 
     private boolean isFueled() {
         return burnTicks > 0;
     }
 
     private void updateFuel() {
-        if (burnTicks <= 1 && tryDrainFuel()) {
+        if (burnTicks <= 1 && ignition.on() && FuelDraw.drain(level, worldPosition, FUEL_PER_BURN)) {
             burnTicks = BURN_TICKS;
             return;
         }
-        if (burnTicks > 0) {
+        if (burnTicks > 0 && drivetrain.firing()) {
             burnTicks--;
         }
     }
 
     private void updateThrottle() {
-        float target = isFueled() ? getTargetThrottle() : 0.0F;
+        float target = drivetrain.firing() ? getTargetThrottle() : 0.0F;
         throttle = Mth.lerp(0.35F, throttle, target);
         if (Math.abs(throttle - target) < 0.01F) {
             throttle = target;
@@ -388,28 +439,9 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
         return Mth.clamp(signalFor(ControlChannel.THROTTLE) / 15.0F, 0.0F, 1.0F);
     }
 
-    private boolean tryDrainFuel() {
-        for (Direction direction : Direction.values()) {
-            IFluidHandler handler = FluidUtil.getFluidHandler(level, worldPosition.relative(direction),
-                    direction.getOpposite()).orElse(null);
-            if (handler == null) continue;
-            for (int i = 0; i < handler.getTanks(); i++) {
-                FluidStack fuel = handler.getFluidInTank(i).copyWithAmount(FUEL_PER_BURN);
-                if (!com.createmotorsport.fuel.FuelRules.accepts(fuel)) continue;
-                FluidStack simulated = handler.drain(fuel, IFluidHandler.FluidAction.SIMULATE);
-                if (simulated.getAmount() != FUEL_PER_BURN || !FluidStack.isSameFluidSameComponents(fuel, simulated)) continue;
-                FluidStack drained = handler.drain(fuel, IFluidHandler.FluidAction.EXECUTE);
-                if (drained.getAmount() == FUEL_PER_BURN && FluidStack.isSameFluidSameComponents(fuel, drained)) return true;
-                if (!drained.isEmpty()) handler.fill(drained, IFluidHandler.FluidAction.EXECUTE);
-            }
-        }
-        return false;
-    }
-
-    // ======================================
-    // Controls and redstone
     // ==========================================
-
+    // DRIVER CONTROLS / REDSTONE
+    // ==========================================
 
     public void setDriverControls(float throttle01, boolean clutch, boolean shiftUp, boolean shiftDown) {
         if (level == null || level.isClientSide) {
@@ -423,162 +455,38 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
         driverSignalTime = level.getGameTime();
     }
 
-    // steering wheel pushes chosen drive layout (RWD/FWD/AWD) here
-    public void setDriveMode(SteeringWheelBlockEntity.DriveMode mode) {
-        if (mode != null) {
-            this.driveMode = mode;
+    public void setDriverIgnition(boolean held) {
+        if (level == null || level.isClientSide) {
+            return;
+        }
+        driverIgnition = held;
+        driverSignalTime = level.getGameTime();
+    }
+
+    // if the car has a steering wheel
+    public void markKeyed() {
+        if (level != null) {
+            keyedTime = level.getGameTime();
         }
     }
 
-    // Does this axle get engine torque under the current drive mode
-    private boolean isDrivenAxle(SuspensionBlockEntity suspension) {
-        return switch (driveMode) {
-            case AWD -> true;
-            case RWD -> !suspension.isFrontAxle();
-            case FWD -> suspension.isFrontAxle();
-        };
+    private boolean keyed() {
+        return level != null && keyedTime >= level.getGameTime() - 2;
     }
 
-    // driving aids that affect torque: engine mode, overtake boost, traction control. Pushed here from steering wheel
-    public void setDriverAids(boolean overtake, boolean modeUp, boolean modeDown, boolean tcToggle) {
+    public boolean ignitionOn() {
+        return ignition.on();
+    }
+
+    // Overtake and engine mode
+    public void setDriverAids(boolean overtake, boolean modeUp, boolean modeDown) {
         if (level == null || level.isClientSide) {
             return;
         }
         auxOvertake = overtake;
         auxModeUp = modeUp;
         auxModeDown = modeDown;
-        auxTc = tcToggle;
         driverSignalTime = level.getGameTime();
-    }
-
-
-    // torque multiplier from driver aids (engine mode, overtake boost, traction control)
-    private double powerFactor(boolean wantBoost, double peakOmega, double peakLatUse, double repRadius,
-                               boolean running, double tractionForce, double demandTorque) {
-        double factor = powerMode / (double) MAX_POWER_MODE;
-
-        boosting = wantBoost && boostReserve > 0.0;
-        if (boosting) {
-            factor *= BOOST_FACTOR;
-            boostReserve = Math.max(0.0, boostReserve - BOOST_DRAIN);
-        } else {
-            boostReserve = Math.min(1.0, boostReserve + BOOST_RECHARGE);
-        }
-
-        factor *= tractionControlCap(peakOmega, peakLatUse, repRadius, running, tractionForce,
-                demandTorque * factor);
-
-        telemPowerFactor = factor;
-        return factor;
-    }
-
-
-    private double tractionControlCap(double peakOmega, double peakLatUse, double repRadius,
-                                      boolean running, double tractionForce, double demandTorque) {
-        if (!tractionControl || !running || repRadius <= 0.0 || throttle <= 0.1f) {
-            tcIntegral = 0.0;
-            tcFactor = 1.0;
-            telemTcSlipTarget = Config.TC_TARGET_SLIP.getAsDouble();
-            telemTcSlipRatio = 0.0;
-            telemTcFactor = 1.0;
-            telemTcCapacity = 1.0;
-            return 1.0;
-        }
-        Vec3 vel = Sable.HELPER.getVelocity(level, Vec3.atCenterOf(worldPosition));
-        Vec3 fwd = headingForward();
-
-        double ground = Math.abs(vel.x * fwd.x + vel.z * fwd.z);
-        double wheelSurface = Math.abs(peakOmega) * repRadius;
-        double slipRatio = (wheelSurface - ground) / Math.max(ground, TC_SPEED_FLOOR);
-        telemTcSlipRatio = slipRatio;
-        double latUse = Mth.clamp(peakLatUse, 0.0, 1.0);
-        double slipTarget = Config.TC_TARGET_SLIP.getAsDouble() * Math.sqrt(Math.max(0.0, 1.0 - latUse * latUse));
-        telemTcSlipTarget = slipTarget;
-        double error = slipRatio - slipTarget;
-
-        if (error > 0.0) {
-            tcIntegral = Math.min(tcIntegral + error * TICK_SECONDS, TC_INTEGRAL_CLAMP);
-        } else {
-            tcIntegral = Math.max(0.0, tcIntegral + error * TICK_SECONDS);
-        }
-
-        double cut = Config.TC_PROPORTIONAL.getAsDouble() * Math.max(0.0, error)
-                + Config.TC_INTEGRAL.getAsDouble() * tcIntegral;
-        double target = Mth.clamp(1.0 - cut, Config.TC_MIN_THROTTLE.getAsDouble(), 1.0);
-
-        double headroom = slipTarget > 1.0e-6 ? Mth.clamp(-error / slipTarget, 0.0, 1.0) : 0.0;
-        if (target < tcFactor) {
-            tcFactor = target;
-        } else {
-            tcFactor = Math.min(target,
-                    tcFactor + Config.TC_RECOVER_RATE.getAsDouble() * (1.0 + TC_RELEASE_GAIN * headroom));
-        }
-
-        telemTcFactor = tcFactor;
-
-        double capacityCap = 1.0;
-        if (tractionForce > 0.0 && demandTorque > 1.0e-6) {
-            capacityCap = Mth.clamp(tractionForce * repRadius / demandTorque, 0.0, 1.0);
-        }
-        telemTcCapacity = capacityCap;
-
-        double factor = Math.min(tcFactor, capacityCap);
-        double sideSlip = Math.abs(vel.x * fwd.z - vel.z * fwd.x);
-        if (sideSlip > TCL_SIDE_SLIP) {
-            factor *= Mth.clamp(1.0 - (sideSlip - TCL_SIDE_SLIP) / TCL_SIDE_RANGE, TCL_SIDE_FLOOR, 1.0);
-        }
-        return factor;
-    }
-
-    private Vec3 headingForward() {
-        Direction facing = getFacing();
-        SubLevel sub = level == null ? null : Sable.HELPER.getContaining(level, worldPosition);
-        if (sub != null) {
-            Vector3d world = new Vector3d(facing.getStepX(), 0.0, facing.getStepZ());
-            sub.logicalPose().transformNormal(world);
-            double lenSq = world.x * world.x + world.z * world.z;
-            if (lenSq > 1.0e-6) {
-                double inv = 1.0 / Math.sqrt(lenSq);
-                return new Vec3(world.x * inv, 0.0, world.z * inv);
-            }
-        }
-        return new Vec3(facing.getStepX(), 0.0, facing.getStepZ());
-    }
-
-    public int getPowerMode() {
-        return powerMode;
-    }
-
-    public boolean isTractionControlOn() {
-        return tractionControl;
-    }
-
-    public double getBoostReserve() {
-        return boostReserve;
-    }
-
-    public boolean isBoosting() {
-        return boosting;
-    }
-
-    public double getTcSlipFactor() {
-        return telemTcFactor;
-    }
-
-    public double getTcCapacityFactor() {
-        return telemTcCapacity;
-    }
-
-    public double getTcSlipRatio() {
-        return telemTcSlipRatio;
-    }
-
-    public double getTcSlipTarget() {
-        return telemTcSlipTarget;
-    }
-
-    public double getPowerFactor() {
-        return telemPowerFactor;
     }
 
     private boolean driverActive() {
@@ -589,90 +497,123 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
         if (driverActive()) {
             return driverSignals[channel.ordinal()];
         }
-        return receivedSignals[channel.ordinal()];
+        return links.signal(channel.ordinal());
     }
 
     private boolean hasLink(ControlChannel channel) {
-        return !inventory.getItem(channelSlotA(channel)).isEmpty()
-                || !inventory.getItem(channelSlotB(channel)).isEmpty();
+        return links.hasLink(channel.ordinal());
     }
 
     private void refreshLinkNetwork() {
-        if (level == null || level.isClientSide) {
-            return;
-        }
-        for (ControlChannel channel : CHANNELS) {
-            int i = channel.ordinal();
-            if (registeredLinks[i]) {
-                Create.REDSTONE_LINK_NETWORK_HANDLER.removeFromNetwork(level, channelLinks[i]);
-                registeredLinks[i] = false;
-            }
-            if (hasLink(channel)) {
-                Create.REDSTONE_LINK_NETWORK_HANDLER.addToNetwork(level, channelLinks[i]);
-                registeredLinks[i] = true;
-            } else {
-                receivedSignals[i] = 0;
-            }
-        }
+        links.refresh();
     }
 
     private void removeLinks() {
+        links.remove();
+    }
+
+    public SimpleContainer getInventory() {
+        return inventory;
+    }
+
+    private void syncAttachmentState() {
+        for (int slot = 0; slot < SLOT_COUNT; slot++) {
+            items.set(slot, inventory.getItem(slot));
+        }
         if (level == null || level.isClientSide) {
             return;
         }
-        for (ControlChannel channel : CHANNELS) {
-            int i = channel.ordinal();
-            if (registeredLinks[i]) {
-                Create.REDSTONE_LINK_NETWORK_HANDLER.removeFromNetwork(level, channelLinks[i]);
-                registeredLinks[i] = false;
-            }
-        }
+
+        refreshLinkNetwork();
     }
 
-    private class ChannelLink implements IRedstoneLinkable {
-        private final ControlChannel channel;
+    // ==========================================
+    // TELEMETRY
+    // ==========================================
 
-        private ChannelLink(ControlChannel channel) {
-            this.channel = channel;
-        }
-
-        @Override
-        public int getTransmittedStrength() {
-            return 0;
-        }
-
-        @Override
-        public void setReceivedStrength(int power) {
-            receivedSignals[channel.ordinal()] = power;
-        }
-
-        @Override
-        public boolean isListening() {
-            return hasLink(channel);
-        }
-
-        @Override
-        public boolean isAlive() {
-            return level != null && !level.isClientSide && !isRemoved() && level.isLoaded(worldPosition);
-        }
-
-        @Override
-        public Couple<RedstoneLinkNetworkHandler.Frequency> getNetworkKey() {
-            return Couple.create(
-                    RedstoneLinkNetworkHandler.Frequency.of(inventory.getItem(channelSlotA(channel))),
-                    RedstoneLinkNetworkHandler.Frequency.of(inventory.getItem(channelSlotB(channel)))
-            );
-        }
-
-        @Override
-        public BlockPos getLocation() {
-            return worldPosition;
-        }
+    public int driveSign(Direction suspensionFacing) {
+        return rotationDirection * facingSign(getBlockState().getValue(EngineBlock.FACING), suspensionFacing);
     }
 
-    // ============================================
-    // Sound
-    // =============
+    // trying to auto-align the car, so +1 is the suspension facing same way as engine, -1 if opposite
+    private static int facingSign(Direction engineFacing, Direction suspensionFacing) {
+        int dot = engineFacing.getStepX() * suspensionFacing.getStepX()
+                + engineFacing.getStepZ() * suspensionFacing.getStepZ();
+        return dot < 0 ? -1 : 1;
+    }
+
+    public TorqueSplitSpec centerDiff() {
+        return drivetrain.gearbox().centerDiff();
+    }
+
+    public TorqueSplitSpec interAxleDiff() {
+        return drivetrain.gearbox().interAxleDiff();
+    }
+
+    public TractionControlSpec tractionControlSpec() {
+        return drivetrain.spec().tractionControl();
+    }
+
+    public double wheelTorquePerThrottle() {
+        return drivetrain.wheelTorquePerThrottle() * torqueScale;
+    }
+
+    public int getPowerMode() {
+        return power.mode();
+    }
+
+    public double getBoostReserve() {
+        return power.reserve();
+    }
+
+    public boolean isBoosting() {
+        return power.boosting();
+    }
+
+    public double getPowerFactor() {
+        return power.factor();
+    }
+
+    public DrivetrainSim getDrivetrain() {
+        return drivetrain;
+    }
+
+    public Direction getFacing() {
+        return getBlockState().getValue(EngineBlock.FACING);
+    }
+
+    public boolean isDriverActive() {
+        return driverActive();
+    }
+
+    public float getThrottle() {
+        return throttle;
+    }
+
+    public double getWheelTorqueTotal() {
+        return drivetrain.lastWheelTorque() * torqueScale;
+    }
+
+    public double getAvgWheelOmega() {
+        return telemAvgWheelOmega;
+    }
+
+    public int getDrivenWheelCount() {
+        return telemDrivenWheels;
+    }
+
+    public int getDisplayRpm() {
+        return (int) (drivetrain.getRpmFraction() * drivetrain.spec().redlineRpm());
+    }
+
+    // 0 is reverse, 1 is neutral, 2 is 1st, etc
+    public int getGearCode() {
+        return drivetrain.gearCode();
+    }
+
+    // ==========================================
+    // SOUND
+    // ==========================================
 
     // muted for now until we work on this
     private void playEngineSound(boolean running) {
@@ -702,115 +643,23 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
         level.playSound(null, worldPosition, sound, SoundSource.BLOCKS, volume, pitch);
     }
 
-    // ======================================
-    // Sync + inventory plumbing
-    // ================================
-
-    public DrivetrainSim getDrivetrain() {
-        return drivetrain;
-    }
-
-    public Direction getFacing() {
-        return getBlockState().getValue(EngineBlock.FACING);
-    }
-
-    public boolean isDriverActive() {
-        return driverActive();
-    }
-
-    public float getThrottle() {
-        return throttle;
-    }
-
-    public double getWheelTorqueTotal() {
-        return telemWheelTorqueTotal;
-    }
-
-    public double getAvgWheelOmega() {
-        return telemAvgWheelOmega;
-    }
-
-    public int getDrivenWheelCount() {
-        return telemDrivenWheels;
-    }
-
-    // server-side RPM
-    public int getDisplayRpm() {
-        return (int) (drivetrain.getRpmFraction() * drivetrain.spec().redlineRpm());
-    }
-
-    // 0 is reverse, 1 is neutral, 2 is 1st, etc
-    public int getGearCode() {
-        return drivetrain.gearCode();
-    }
-
-    public SimpleContainer getInventory() {
-        return inventory;
-    }
-
-    public boolean hasExhaust() {
-        return !inventory.getItem(SLOT_EXHAUST).isEmpty();
-    }
-
-    public boolean hasIntake() {
-        return !inventory.getItem(SLOT_INTAKE).isEmpty();
-    }
-
-    private void syncAttachmentState() {
-        for (int slot = 0; slot < SLOT_COUNT; slot++) {
-            items.set(slot, inventory.getItem(slot));
-        }
-        if (level == null || level.isClientSide) {
-            return;
-        }
-
-        refreshLinkNetwork();
-
-        BlockState state = getBlockState();
-        if (!state.hasProperty(EngineBlock.HAS_EXHAUST) || !state.hasProperty(EngineBlock.HAS_INTAKE)) {
-            return;
-        }
-        BlockState updated = state
-                .setValue(EngineBlock.HAS_EXHAUST, hasExhaust())
-                .setValue(EngineBlock.HAS_INTAKE, hasIntake());
-        if (updated != state) {
-            level.setBlock(worldPosition, updated, 3);
-            notifyUpdate();
-        }
-    }
-
-    @Override
-    public void initialize() {
-        super.initialize();
-        refreshLinkNetwork();
-    }
-
-    @Override
-    public void remove() {
-        removeLinks();
-        super.remove();
-    }
-
-    @Override
-    public void onChunkUnloaded() {
-        removeLinks();
-        super.onChunkUnloaded();
-    }
-
-    // =============================
+    // ==========================================
     // NBT
-    // ==================
+    // ==========================================
 
     @Override
     protected void write(CompoundTag tag, HolderLookup.Provider registries, boolean clientPacket) {
         super.write(tag, registries, clientPacket);
         tag.putInt("BurnTicks", burnTicks);
+        tag.putBoolean("Ignition", ignition.on());
         tag.putFloat("Throttle", throttle);
-        tag.putInt("PowerMode", powerMode);
-        tag.putBoolean("TractionControl", tractionControl);
+        tag.putInt("PowerMode", power.mode());
         tag.putInt("RotationDirection", rotationDirection);
-        tag.putDouble("DesignMassOverride", designMassOverride);
-        drivetrain.save(tag);
+        gearboxSlot.write(tag);
+        engineSlot.write(tag);
+        tag.putDouble("Rpm", drivetrain.getRpm());
+        tag.putInt("Gear", drivetrain.getGearIndex());
+        tag.putInt("SlotLayout", 1);
         ContainerHelper.saveAllItems(tag, items, registries);
     }
 
@@ -818,17 +667,39 @@ public class EngineBlockEntity extends SmartBlockEntity implements dev.ryanhcode
     protected void read(CompoundTag tag, HolderLookup.Provider registries, boolean clientPacket) {
         super.read(tag, registries, clientPacket);
         burnTicks = tag.getInt("BurnTicks");
+        ignition.setOn(!tag.contains("Ignition") || tag.getBoolean("Ignition"));
         throttle = tag.getFloat("Throttle");
-        powerMode = tag.contains("PowerMode") ? Math.max(1, Math.min(MAX_POWER_MODE, tag.getInt("PowerMode"))) : MAX_POWER_MODE;
-        tractionControl = tag.getBoolean("TractionControl");
+        power.setMode(tag.contains("PowerMode") ? tag.getInt("PowerMode") : PowerMode.MAX);
         rotationDirection = tag.getInt("RotationDirection") < 0 ? -1 : 1;
-        designMassOverride = tag.getDouble("DesignMassOverride");
-        applyDesignMass();
-        drivetrain.load(tag);
-        ContainerHelper.loadAllItems(tag, items, registries);
+        gearboxSlot.read(tag, kind::gearbox);
+        engineSlot.read(tag, kind::engine);
+        if (!clientPacket) {
+            migrateDesignMass(tag);
+        }
+        drivetrain.restore(tag.getDouble("Rpm"), tag.getInt("Gear"));
+        if (tag.contains("SlotLayout")) {
+            ContainerHelper.loadAllItems(tag, items, registries);
+        } else {
+            NonNullList<ItemStack> legacy = NonNullList.withSize(LEGACY_CHANNELS_START + SLOT_COUNT, ItemStack.EMPTY);
+            ContainerHelper.loadAllItems(tag, legacy, registries);
+            for (int slot = 0; slot < SLOT_COUNT; slot++) {
+                items.set(slot, legacy.get(LEGACY_CHANNELS_START + slot));
+            }
+        }
         for (int slot = 0; slot < SLOT_COUNT; slot++) {
             inventory.setItem(slot, items.get(slot));
         }
         syncAttachmentState();
+    }
+
+
+    // legacy compatibility
+    private void migrateDesignMass(CompoundTag tag) {
+        double old = tag.getDouble("DesignMassOverride");
+        if (old > 0.0 && !SpecOverrides.isSet(engineSlot.overrides(), "design_vehicle_mass_blocks")) {
+            CompoundTag migrated = engineSlot.overrides().copy();
+            migrated.putDouble("design_vehicle_mass_blocks", Mth.clamp(old, 1.0, 100000.0));
+            engineSlot.setOverrides(migrated);
+        }
     }
 }

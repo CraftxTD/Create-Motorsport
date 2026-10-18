@@ -10,6 +10,13 @@
     "createmotorsport:landing_legs",
     "createmotorsport:trailer_control_panel",
     "createmotorsport:large_fifth_wheel",
-    "createmotorsport:wide_kingpin"
+    "createmotorsport:wide_kingpin",
+    "createmotorsport:engine_block",
+    "createmotorsport:truck_engine_block",
+    "createmotorsport:passenger_engine_block",
+    "createmotorsport:suspension",
+    "createmotorsport:passenger_suspension",
+    "createmotorsport:truck_suspension",
+    "createmotorsport:steering_wheel"
   ]
 }

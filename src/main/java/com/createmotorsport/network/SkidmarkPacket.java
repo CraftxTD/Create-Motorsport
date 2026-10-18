@@ -1,7 +1,7 @@
 package com.createmotorsport.network;
 
 import com.createmotorsport.CreateMotorsport;
-import com.createmotorsport.client.SkidmarkManager;
+import com.createmotorsport.client.render.SkidmarkManager;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;

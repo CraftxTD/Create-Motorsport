@@ -6,4 +6,6 @@ public record DamperSpec(double kneeVelocity, double blowOffSlope) {
 
     public static final DamperSpec LINEAR = new DamperSpec(0.0, 1.0);
     public static final DamperSpec F1_DIGRESSIVE = new DamperSpec(0.08, 0.30);
+    public static final DamperSpec ROAD = new DamperSpec(0.19, 0.45);
+    public static final DamperSpec TRUCK = new DamperSpec(0.22, 0.50);
 }

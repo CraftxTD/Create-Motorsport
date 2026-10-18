@@ -1,0 +1,5 @@
+{
+  "type": "clutch_lsd",
+  "anti_slip_torque": 200.0,
+  "drift_anti_slip_torque": 40.0
+}

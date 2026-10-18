@@ -12,4 +12,8 @@ public record TerrainAssistSpec(double maxVerticalRate, double maxClimbFraction,
     public boolean enabled() {
         return maxVerticalRate > 0.0 && maxClimbFraction > 0.0 && lookAheadBlocks > 0.0;
     }
+
+    public boolean extraEnabled() {
+        return enabled() && extraMaxSlope > 0.0 && extraMaxClimbBlocks > 0.0 && extraLookAheadBlocks > 0.0;
+    }
 }
